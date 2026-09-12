@@ -28,9 +28,9 @@ static const BITMAPINFOHEADER* GetBIH(const CMediaType* pmt)
 	return GetBitmapInfoHeader(pmt);
 }
 
-CCaptureColorInfoFilter::CCaptureColorInfoFilter(LPUNKNOWN punk, HRESULT* phr, const DXVA2_ExtendedFormat& exfmt)
+CCaptureColorInfoFilter::CCaptureColorInfoFilter(LPUNKNOWN punk, HRESULT* phr, DWORD dwControlFlags)
 	: CTransformFilter(L"CCaptureColorInfoFilter", punk, __uuidof(CCaptureColorInfoFilter))
-	, m_exfmt(exfmt)
+	, m_dwControlFlags(dwControlFlags)
 {
 	if (phr) {
 		*phr = S_OK;
@@ -87,7 +87,7 @@ HRESULT CCaptureColorInfoFilter::MakeTaggedType(const CMediaType* mtIn, CMediaTy
 
 	// capture streams from HDMI sources are progressive
 	vih2->dwInterlaceFlags = 0;
-	vih2->dwControlFlags   = m_exfmt.value;
+	vih2->dwControlFlags   = m_dwControlFlags;
 
 	if (vih2->bmiHeader.biSizeImage) {
 		pmtOut->SetSampleSize(vih2->bmiHeader.biSizeImage);

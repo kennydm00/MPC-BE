@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <dxva2api.h>
-
 //
 // Per capture device video format settings.
 //
@@ -69,8 +67,9 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 // true when the pin behind the IAMStreamConfig is already connected (SetFormat must not be used then).
 bool IsStreamConfigPinConnected(IAMStreamConfig* pAMSC);
 
-// BT.2020 matrix + BT.2020 primaries + SMPTE ST 2084 (PQ) + 16-235, marked as present.
-DXVA2_ExtendedFormat MakeHdr10ExtendedFormat();
+// VIDEOINFOHEADER2::dwControlFlags for BT.2020 matrix + BT.2020 primaries +
+// SMPTE ST 2084 (PQ) + 16-235, marked as present (packed DXVA2_ExtendedFormat).
+DWORD MakeHdr10ControlFlags();
 
 // "P010 3840x2160 @166833 VideoInfo" - for logging.
 CStringW DescribeMediaType(const AM_MEDIA_TYPE* pmt);

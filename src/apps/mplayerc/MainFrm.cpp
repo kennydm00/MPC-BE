@@ -17500,7 +17500,7 @@ HRESULT CMainFrame::InsertCaptureColorInfoFilter(IPin* pTeeOutPin, IBaseFilter**
 	*ppRenderPin = nullptr;
 
 	HRESULT hr = S_OK;
-	CComPtr<IBaseFilter> pTag = DNew CCaptureColorInfoFilter(nullptr, &hr, MakeHdr10ExtendedFormat());
+	CComPtr<IBaseFilter> pTag = DNew CCaptureColorInfoFilter(nullptr, &hr, MakeHdr10ControlFlags());
 	if (!pTag) {
 		return E_OUTOFMEMORY;
 	}

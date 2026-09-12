@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <dxva2api.h>
-
 //
 // Tags the media type of a capture stream with explicit colorimetry.
 //
@@ -37,7 +35,7 @@
 class __declspec(uuid("1D6A1C39-7B1D-4F9A-9E9B-4B0B1B7B5E21"))
 	CCaptureColorInfoFilter : public CTransformFilter
 {
-	DXVA2_ExtendedFormat m_exfmt = {};
+	DWORD m_dwControlFlags = 0;
 
 	// Builds the tagged output type from an input type.
 	HRESULT MakeTaggedType(const CMediaType* mtIn, CMediaType* pmtOut);
@@ -51,5 +49,5 @@ protected:
 	HRESULT GetMediaType(int iPosition, CMediaType* pmt);
 
 public:
-	CCaptureColorInfoFilter(LPUNKNOWN punk, HRESULT* phr, const DXVA2_ExtendedFormat& exfmt);
+	CCaptureColorInfoFilter(LPUNKNOWN punk, HRESULT* phr, DWORD dwControlFlags);
 };

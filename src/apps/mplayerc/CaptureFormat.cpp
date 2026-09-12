@@ -19,6 +19,8 @@
  */
 
 #include "stdafx.h"
+#include <d3d9.h>    // dxva2api.h needs the D3D9 types
+#include <dxva2api.h>
 #include <evr.h>
 #include <vector>
 #include <algorithm>
@@ -302,7 +304,7 @@ bool IsStreamConfigPinConnected(IAMStreamConfig* pAMSC)
 	return false;
 }
 
-DXVA2_ExtendedFormat MakeHdr10ExtendedFormat()
+DWORD MakeHdr10ControlFlags()
 {
 	DXVA2_ExtendedFormat exfmt = {};
 
@@ -312,7 +314,7 @@ DXVA2_ExtendedFormat MakeHdr10ExtendedFormat()
 	exfmt.VideoPrimaries        = MFVideoPrimaries_BT2020;         // 9
 	exfmt.VideoTransferFunction = MFVideoTransFunc_2084;           // 15
 
-	return exfmt;
+	return exfmt.value;
 }
 
 CStringW DescribeMediaType(const AM_MEDIA_TYPE* pmt)
