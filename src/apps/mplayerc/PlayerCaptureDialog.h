@@ -25,6 +25,7 @@
 #include "controls/FloatEdit.h"
 #include <ExtLib/ui/ResizableLib/ResizableDialog.h>
 #include "PlayerBar.h"
+#include "CaptureFormat.h"
 
 
 class CMainFrame;
@@ -344,6 +345,8 @@ private:
 	CFloatEdit m_vidfpsedit;
 	float m_vidfps = 0;
 	CButton m_vidsetres;
+	CButton m_vidremember;
+	CButton m_vidforcehdr;
 	CComboBox m_audinput;
 	CComboBox m_audtype;
 	CComboBox m_auddimension;
@@ -364,6 +367,13 @@ private:
 	BOOL m_fSepAudio = FALSE;
 	int m_muxtype = 0;
 	CComboBox m_muxctrl;
+
+	// per device capture settings
+	CaptureDeviceSettings m_devSettings;
+	// the width/height spins and the fps edit are only stamped into the media type
+	// after the user actually changed them
+	bool m_bVidUserDims = false;
+	bool m_bVidUserFps = false;
 
 	// video input
 	CStringW m_vidDisplayName;
@@ -446,6 +456,13 @@ public:
 		return m_bInitialized;
 	};
 
+	const CaptureDeviceSettings& GetDeviceSettings() const {
+		return m_devSettings;
+	};
+
+	// takes over a format that was set through the driver's own property page
+	void AdoptDriverFormat(const AM_MEDIA_TYPE* pmt);
+
 protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
@@ -460,6 +477,8 @@ protected:
 	afx_msg void OnVideoType();
 	afx_msg void OnVideoDimension();
 	afx_msg void OnOverrideVideoDimension();
+	afx_msg void OnRememberFormat();
+	afx_msg void OnForceHdr();
 	afx_msg void OnAudioInput();
 	afx_msg void OnAudioType();
 	afx_msg void OnAudioDimension();

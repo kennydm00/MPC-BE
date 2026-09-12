@@ -108,6 +108,7 @@
     <ClCompile Include="DiskImage.cpp" />
     <ClCompile Include="FileDialogs.cpp" />
     <ClCompile Include="filters\ChaptersSouce.cpp" />
+    <ClCompile Include="filters\CaptureColorInfoFilter.cpp" />
     <ClCompile Include="filters\DeinterlacerFilter.cpp" />
     <ClCompile Include="filters\TextPassThruFilter.cpp" />
     <ClCompile Include="GraphThread.cpp" />
@@ -117,6 +118,7 @@
     <ClCompile Include="MediaControls.cpp" />
     <ClCompile Include="Misc.cpp" />
     <ClCompile Include="OSD.cpp" />
+    <ClCompile Include="CaptureFormat.cpp" />
     <ClCompile Include="PlayerCaptureDialog.cpp" />
     <ClCompile Include="PlayerFlyBar.cpp" />
     <ClCompile Include="PlayerYouTube.cpp" />
@@ -242,6 +244,7 @@
     <ClInclude Include="DiskImage.h" />
     <ClInclude Include="FileDialogs.h" />
     <ClInclude Include="filters\ChaptersSouce.h" />
+    <ClInclude Include="filters\CaptureColorInfoFilter.h" />
     <ClInclude Include="filters\DeinterlacerFilter.h" />
     <ClInclude Include="filters\TextPassThruFilter.h" />
     <ClInclude Include="GraphThread.h" />
@@ -253,6 +256,7 @@
     <ClInclude Include="mpc_messages.h" />
     <ClInclude Include="OpenMediaData.h" />
     <ClInclude Include="OSD.h" />
+    <ClInclude Include="CaptureFormat.h" />
     <ClInclude Include="PlayerCaptureDialog.h" />
     <ClInclude Include="PlayerFlyBar.h" />
     <ClInclude Include="PlayerYouTube.h" />

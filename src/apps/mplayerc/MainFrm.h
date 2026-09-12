@@ -756,6 +756,8 @@ public:
 	bool BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPreview, bool fACapture);
 	bool StartCapture();
 	bool StopCapture();
+	void ReleaseCapturePreviewInterfaces();
+	HRESULT InsertCaptureColorInfoFilter(IPin* pTeeOutPin, IBaseFilter** ppTagFilter, IPin** ppRenderPin);
 
 	bool DoAfterPlaybackEvent();
 	void ParseDirs(std::list<CString>& sl);

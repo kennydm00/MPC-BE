@@ -556,6 +556,8 @@ void CPlayerCaptureDialog::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_EDIT2, m_vidveredit);
 	DDX_Control(pDX, IDC_EDIT3, m_vidfpsedit);
 	DDX_Control(pDX, IDC_BUTTON1, m_vidsetres);
+	DDX_Control(pDX, IDC_CHECK6, m_vidremember);
+	DDX_Control(pDX, IDC_CHECK7, m_vidforcehdr);
 	DDX_Control(pDX, IDC_COMBO3, m_audinput);
 	DDX_Control(pDX, IDC_COMBO2, m_audtype);
 	DDX_Control(pDX, IDC_COMBO6, m_auddimension);
@@ -588,6 +590,7 @@ BOOL CPlayerCaptureDialog::PreTranslateMessage(MSG* pMsg)
 		if (pMsg->wParam == VK_RETURN) {
 			CWnd* pFocused = GetFocus();
 			if (pFocused && pFocused->m_hWnd == m_vidfpsedit.m_hWnd) {
+				m_bVidUserFps = true;
 				UpdateGraph();
 			}
 		}
@@ -679,6 +682,10 @@ void CPlayerCaptureDialog::EmptyVideo()
 
 	m_vfa.clear();
 
+	m_devSettings = CaptureDeviceSettings();
+	m_bVidUserDims = false;
+	m_bVidUserFps = false;
+
 	m_pAMXB.Release();
 	m_pAMTuner.Release();
 	m_pAMVSC.Release();
@@ -697,7 +704,12 @@ void CPlayerCaptureDialog::EmptyVideo()
 		m_vidveredit.EnableWindow(FALSE);
 		m_vidfpsedit.EnableWindow(FALSE);
 		m_vidfps = 0;
+		m_vidfpsedit.SetWindowTextW(L"");
 		m_vidsetres.EnableWindow(FALSE);
+		m_vidremember.SetCheck(BST_UNCHECKED);
+		m_vidremember.EnableWindow(FALSE);
+		m_vidforcehdr.SetCheck(BST_UNCHECKED);
+		m_vidforcehdr.EnableWindow(FALSE);
 		UpdateData(FALSE);
 	}
 }
@@ -752,7 +764,7 @@ void CPlayerCaptureDialog::UpdateMediaTypes()
 		}
 
 		if (pmt) {
-			if (m_vidfps > 0) {
+			if (m_vidfps > 0 && m_bVidUserFps) {
 				REFERENCE_TIME atpf = (REFERENCE_TIME)(10000000.0 / m_vidfps);
 
 				if (pcaps) {
@@ -772,12 +784,16 @@ void CPlayerCaptureDialog::UpdateMediaTypes()
 									: (pmt->formattype == FORMAT_VideoInfo2)
 									? &((VIDEOINFOHEADER2*)pmt->pbFormat)->bmiHeader
 									: nullptr;
-			if (bih) {
+			if (bih && m_bVidUserDims) {
+				const int sign = bih->biHeight < 0 ? -1 : 1;
 				bih->biWidth = m_vidhor.GetPos32();
-				bih->biHeight = m_vidver.GetPos32();
-				bih->biSizeImage = bih->biWidth*bih->biHeight*bih->biBitCount>>3;
+				bih->biHeight = sign * m_vidver.GetPos32();
+				bih->biSizeImage = bih->biWidth*abs(bih->biHeight)*bih->biBitCount>>3;
 			}
-			SaveMediaType(L"Vid", m_vidDisplayName, pmt);
+			if (!m_devSettings.bExplicit) {
+				// the per device store is authoritative once the user asked us to remember
+				SaveMediaType(L"Vid", m_vidDisplayName, pmt);
+			}
 
 			m_mtv = *pmt;
 			DeleteMediaType(pmt);
@@ -949,6 +965,10 @@ void CPlayerCaptureDialog::UpdateGraph()
 {
 	UpdateMediaTypes();
 
+	if (m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
+		SaveCaptureDeviceSettings(m_devSettings);
+	}
+
 	m_pMainFrame->BuildGraphVideoAudio(m_fVidPreview, false, m_fAudPreview, false);
 
 	UpdateUserDefinableControls();
@@ -992,6 +1012,7 @@ void CPlayerCaptureDialog::SetupVideoControls(
 	EmptyVideo();
 
 	m_vidDisplayName = displayName;
+	LoadCaptureDeviceSettings(m_vidDisplayName, m_devSettings);
 	m_pAMXB = pAMXB;
 	m_pAMTuner = pAMTuner;
 	m_pAMVSC = pAMSC;
@@ -1006,6 +1027,7 @@ void CPlayerCaptureDialog::SetupVideoControls(
 	EmptyVideo();
 
 	m_vidDisplayName = displayName;
+	LoadCaptureDeviceSettings(m_vidDisplayName, m_devSettings);
 	m_pAMVSC = pAMSC;
 	m_pAMVfwCD = pAMVfwCD;
 
@@ -1133,10 +1155,25 @@ void CPlayerCaptureDialog::UpdateVideoControls()
 	// streamconfig
 
 	if (m_pAMVSC) {
-		AM_MEDIA_TYPE* pmt;
-		if (LoadMediaType(L"Vid", m_vidDisplayName, &pmt)) {
-			m_pAMVSC->SetFormat(pmt);
-			DeleteMediaType(pmt);
+		bool bApplied = false;
+
+		// The capture pin only accepts a new format while it is disconnected, which is
+		// the case here: the filter has just been added to the graph and nothing is
+		// connected yet. Skip it when the pin is already connected (language reload).
+		if (m_devSettings.bExplicit && !IsStreamConfigPinConnected(m_pAMVSC)) {
+			CStringW why;
+			const HRESULT hr = ApplyCaptureFormat(m_pAMVSC, m_devSettings, why);
+			CaptureDiag(L"UpdateVideoControls: ApplyCaptureFormat -> 0x%08x (%s)", hr, why.GetString());
+			WriteCaptureLastStatus(m_devSettings, why);
+			bApplied = SUCCEEDED(hr);
+		}
+
+		if (!bApplied) {
+			AM_MEDIA_TYPE* pmt;
+			if (LoadMediaType(L"Vid", m_vidDisplayName, &pmt)) {
+				m_pAMVSC->SetFormat(pmt);
+				DeleteMediaType(pmt);
+			}
 		}
 
 		SetupMediaTypes(m_pAMVSC, m_vfa, m_vidtype, m_viddimension, m_mtv);
@@ -1149,6 +1186,13 @@ void CPlayerCaptureDialog::UpdateVideoControls()
 		m_vidhoredit.EnableWindow(TRUE);
 		m_vidveredit.EnableWindow(TRUE);
 		m_vidsetres.EnableWindow(TRUE);
+	}
+
+	if (m_pAMVSC) {
+		m_vidremember.EnableWindow(TRUE);
+		m_vidremember.SetCheck(m_devSettings.bExplicit ? BST_CHECKED : BST_UNCHECKED);
+		m_vidforcehdr.EnableWindow(TRUE);
+		m_vidforcehdr.SetCheck(m_devSettings.bForceHDR ? BST_CHECKED : BST_UNCHECKED);
 	}
 
 	{
@@ -1317,6 +1361,8 @@ BEGIN_MESSAGE_MAP(CPlayerCaptureDialog, CResizableDialog)
 	ON_CBN_SELCHANGE(IDC_COMBO1, OnVideoType)
 	ON_CBN_SELCHANGE(IDC_COMBO5, OnVideoDimension)
 	ON_BN_CLICKED(IDC_BUTTON1, OnOverrideVideoDimension)
+	ON_BN_CLICKED(IDC_CHECK6, OnRememberFormat)
+	ON_BN_CLICKED(IDC_CHECK7, OnForceHdr)
 	ON_CBN_SELCHANGE(IDC_COMBO3, OnAudioInput)
 	ON_CBN_SELCHANGE(IDC_COMBO2, OnAudioType)
 	ON_CBN_SELCHANGE(IDC_COMBO6, OnAudioDimension)
@@ -1459,12 +1505,63 @@ void CPlayerCaptureDialog::OnVideoDimension()
 	fps.Format(L"%.4f", (float)(10000000.0 / ((VIDEOINFOHEADER*)pvfe->mt.pbFormat)->AvgTimePerFrame));
 	m_vidfpsedit.SetWindowText(fps);
 
+	// these values come from the selected capability, not from the user
+	m_bVidUserDims = false;
+	m_bVidUserFps = false;
+
 	UpdateGraph();
 }
 
 void CPlayerCaptureDialog::OnOverrideVideoDimension()
 {
+	m_bVidUserDims = true;
+	m_bVidUserFps = true;
+
 	UpdateGraph();
+}
+
+void CPlayerCaptureDialog::OnRememberFormat()
+{
+	m_devSettings.bExplicit = (m_vidremember.GetCheck() == BST_CHECKED);
+
+	if (m_devSettings.bExplicit) {
+		FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings);
+	}
+
+	SaveCaptureDeviceSettings(m_devSettings);
+}
+
+void CPlayerCaptureDialog::OnForceHdr()
+{
+	m_devSettings.bForceHDR = (m_vidforcehdr.GetCheck() == BST_CHECKED);
+
+	SaveCaptureDeviceSettings(m_devSettings);
+
+	// the tagging filter is added to or removed from the graph on rebuild
+	UpdateGraph();
+}
+
+void CPlayerCaptureDialog::AdoptDriverFormat(const AM_MEDIA_TYPE* pmt)
+{
+	if (!pmt || pmt->majortype != MEDIATYPE_Video) {
+		return;
+	}
+
+	m_mtv = *pmt;
+
+	// the driver chose these values, they are not spin control edits
+	m_bVidUserDims = false;
+	m_bVidUserFps = false;
+
+	if (m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
+		SaveCaptureDeviceSettings(m_devSettings);
+	}
+
+	if (m_pAMVSC) {
+		SetupMediaTypes(m_pAMVSC, m_vfa, m_vidtype, m_viddimension, m_mtv);
+	}
+
+	UpdateUserDefinableControls();
 }
 
 void CPlayerCaptureDialog::OnAudioInput()

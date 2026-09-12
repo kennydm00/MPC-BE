@@ -63,6 +63,8 @@
 #include "FGManagerBDA.h"
 #include "filters/TextPassThruFilter.h"
 #include "filters/ChaptersSouce.h"
+#include "filters/CaptureColorInfoFilter.h"
+#include "CaptureFormat.h"
 #include "filters/parser/MpegSplitter/MpegSplitter.h"
 #include "filters/parser/MatroskaSplitter/IMatroskaSplitter.h"
 #include "filters/switcher/AudioSwitcher/AudioSwitcher.h"
@@ -9001,10 +9003,52 @@ void CMainFrame::OnPlayFilters(UINT nID)
 	}
 
 	if (ps.GetPageCount() > 0) {
+		// A capture pin only accepts a new format while it is disconnected. When the user
+		// configured this device, disconnect it around the driver's own property page so
+		// that the choice made there really takes effect, then adopt and rebuild.
+		bool bCaptureVideoPin = false;
+		OAFilterState fsBefore = State_Stopped;
+
+		if (GetPlaybackMode() == PM_CAPTURE && m_pVidCap && m_pAMVSCCap
+				&& !m_wndCaptureBar.m_capdlg.GetDeviceSettings().IsDefault()) {
+			if (CComQIPtr<IAMStreamConfig> pAMSC = pUnk.p) {
+				bCaptureVideoPin = !!m_pAMVSCCap.IsEqualObject(pAMSC);
+			}
+		}
+
+		if (bCaptureVideoPin) {
+			fsBefore = GetMediaState();
+			if (fsBefore != State_Stopped) {
+				SendMessageW(WM_COMMAND, ID_PLAY_STOP);
+			}
+			ReleaseCapturePreviewInterfaces();
+			m_pGB->NukeDownstream(m_pVidCap);
+			CleanGraph();
+		}
+
 		m_pFilterPropSheet = &ps;
 		ps.DoModal();
 		OpenSetupStatusBar();
 		m_pFilterPropSheet = nullptr;
+
+		if (bCaptureVideoPin && GetPlaybackMode() == PM_CAPTURE && m_pAMVSCCap) {
+			AM_MEDIA_TYPE* pmt = nullptr;
+			if (SUCCEEDED(m_pAMVSCCap->GetFormat(&pmt)) && pmt) {
+				CaptureDiag(L"OnPlayFilters: adopting driver format %s", DescribeMediaType(pmt).GetString());
+				m_wndCaptureBar.m_capdlg.AdoptDriverFormat(pmt);
+				DeleteMediaType(pmt);
+			}
+
+			BuildGraphVideoAudio(
+				m_wndCaptureBar.m_capdlg.m_fVidPreview, false,
+				m_wndCaptureBar.m_capdlg.m_fAudPreview, false);
+
+			if (fsBefore == State_Running) {
+				SendMessageW(WM_COMMAND, ID_PLAY_PLAY);
+			} else if (fsBefore == State_Paused) {
+				SendMessageW(WM_COMMAND, ID_PLAY_PAUSE);
+			}
+		}
 	}
 }
 
@@ -17428,6 +17472,71 @@ bool CMainFrame::BuildToCapturePreviewPin(
 	return true;
 }
 
+void CMainFrame::ReleaseCapturePreviewInterfaces()
+{
+	m_pMVRS.Release();
+	m_pMVRSR.Release();
+
+	m_OSD.Stop();
+	m_pCAP.Release();
+	m_clsidCAP = GUID_NULL;
+	m_pVMRWC.Release();
+	m_pVMRMC9.Release();
+	m_pMFVP.Release();
+	m_pMFVDC.Release();
+	m_pQP.Release();
+}
+
+// Inserts the colorimetry tagging filter between the capture Smart Tee and the renderer.
+// On failure nothing is left in the graph and the caller renders the tee pin directly.
+HRESULT CMainFrame::InsertCaptureColorInfoFilter(IPin* pTeeOutPin, IBaseFilter** ppTagFilter, IPin** ppRenderPin)
+{
+	CheckPointer(pTeeOutPin, E_POINTER);
+	CheckPointer(ppTagFilter, E_POINTER);
+	CheckPointer(ppRenderPin, E_POINTER);
+	CheckPointer(m_pGB, E_UNEXPECTED);
+
+	*ppTagFilter = nullptr;
+	*ppRenderPin = nullptr;
+
+	HRESULT hr = S_OK;
+	CComPtr<IBaseFilter> pTag = DNew CCaptureColorInfoFilter(nullptr, &hr, MakeHdr10ExtendedFormat());
+	if (!pTag) {
+		return E_OUTOFMEMORY;
+	}
+	if (FAILED(hr)) {
+		return hr;
+	}
+
+	if (FAILED(hr = m_pGB->AddFilter(pTag, L"Capture Color Info (HDR10)"))) {
+		return hr;
+	}
+
+	IPin* pTagIn = GetFirstPin(pTag, PINDIR_INPUT);
+	if (!pTagIn) {
+		m_pGB->RemoveFilter(pTag);
+		return E_FAIL;
+	}
+
+	if (FAILED(hr = m_pGB->ConnectDirect(pTeeOutPin, pTagIn, nullptr))) {
+		m_pGB->RemoveFilter(pTag);
+		return hr;
+	}
+
+	IPin* pTagOut = GetFirstPin(pTag, PINDIR_OUTPUT);
+	if (!pTagOut) {
+		m_pGB->NukeDownstream(pTag);
+		m_pGB->RemoveFilter(pTag);
+		return E_FAIL;
+	}
+
+	pTagOut->AddRef();
+	*ppRenderPin = pTagOut;
+	*ppTagFilter = pTag.Detach();
+
+	return S_OK;
+}
+
 bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPreview, bool fACapture)
 {
 	if (!m_pCGB) {
@@ -17449,9 +17558,13 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 
 	if (m_pAMVSCCap) {
 		hr = m_pAMVSCCap->SetFormat(&m_wndCaptureBar.m_capdlg.m_mtv);
+		CaptureDiag(L"BuildGraphVideoAudio: SetFormat(capture) %s -> 0x%08x",
+					DescribeMediaType(&m_wndCaptureBar.m_capdlg.m_mtv).GetString(), hr);
 	}
-	if (m_pAMVSCPrev) {
+	// m_pAMVSCPrev can be the very same object as m_pAMVSCCap (see OpenCapture)
+	if (m_pAMVSCPrev && !m_pAMVSCPrev.IsEqualObject(m_pAMVSCCap)) {
 		hr = m_pAMVSCPrev->SetFormat(&m_wndCaptureBar.m_capdlg.m_mtv);
+		CaptureDiag(L"BuildGraphVideoAudio: SetFormat(preview) -> 0x%08x", hr);
 	}
 	if (m_pAMASC) {
 		hr = m_pAMASC->SetFormat(&m_wndCaptureBar.m_capdlg.m_mta);
@@ -17505,19 +17618,31 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 		CComPtr<IMFVideoMixerBitmap> pMFVMB;
 		CComPtr<IMadVRTextOsd>       pMVTO;
 
-		m_pMVRS.Release();
-		m_pMVRSR.Release();
+		ReleaseCapturePreviewInterfaces();
 
-		m_OSD.Stop();
-		m_pCAP.Release();
-		m_clsidCAP = GUID_NULL;
-		m_pVMRWC.Release();
-		m_pVMRMC9.Release();
-		m_pMFVP.Release();
-		m_pMFVDC.Release();
-		m_pQP.Release();
+		CComPtr<IBaseFilter> pColorInfoTag;
+		CComPtr<IPin> pRenderPin = pVidPrevPin;
 
-		m_pGB->Render(pVidPrevPin);
+		if (m_wndCaptureBar.m_capdlg.GetDeviceSettings().bForceHDR) {
+			CComPtr<IBaseFilter> pTag;
+			CComPtr<IPin> pTagOut;
+			const HRESULT hrTag = InsertCaptureColorInfoFilter(pVidPrevPin, &pTag, &pTagOut);
+			CaptureDiag(L"BuildGraphVideoAudio: color info filter -> 0x%08x", hrTag);
+			if (SUCCEEDED(hrTag)) {
+				pColorInfoTag = pTag;
+				pRenderPin = pTagOut;
+			}
+		}
+
+		hr = m_pGB->Render(pRenderPin);
+
+		if (FAILED(hr) && pColorInfoTag) {
+			CaptureDiag(L"BuildGraphVideoAudio: Render() failed (0x%08x), retrying without color info filter", hr);
+			m_pGB->NukeDownstream(pColorInfoTag);
+			m_pGB->RemoveFilter(pColorInfoTag);
+			pColorInfoTag.Release();
+			hr = m_pGB->Render(pVidPrevPin);
+		}
 
 		m_pGB->FindInterface(IID_PPV_ARGS(&m_pCAP), TRUE);
 		if (m_pCAP) {
