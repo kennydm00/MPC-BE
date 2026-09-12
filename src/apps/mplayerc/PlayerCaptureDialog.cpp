@@ -984,9 +984,35 @@ void CPlayerCaptureDialog::SaveUserSelectedFormat()
 	// m_mtv only reflects a deliberate choice on the type/dimension/fps paths. On any
 	// other rebuild it is whatever the driver currently reports, which must never
 	// overwrite a stored preference (e.g. when the source is temporarily absent).
-	if (m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
-		SaveCaptureDeviceSettings(m_devSettings);
+	if (!m_devSettings.bExplicit) {
+		return;
 	}
+
+	CaptureDeviceSettings cds = m_devSettings;
+	const bool bFilled = FillCaptureSettingsFromMediaType(&m_mtv, cds);
+
+	// The graph rebuild above already pushed m_mtv through SetFormat(). The driver may
+	// have refused or clamped it, and UpdateUserDefinableControls() has repainted the
+	// controls from GetFormat(), so store what the device really runs at rather than a
+	// request it never accepted.
+	AM_MEDIA_TYPE* pmtNow = nullptr;
+	if (m_pAMVSC && SUCCEEDED(m_pAMVSC->GetFormat(&pmtNow)) && pmtNow) {
+		CaptureDeviceSettings cdsNow = m_devSettings;
+		if (FillCaptureSettingsFromMediaType(pmtNow, cdsNow)) {
+			if (bFilled && (cdsNow.subtype != cds.subtype || cdsNow.width != cds.width
+					|| cdsNow.height != cds.height || cdsNow.frameInterval != cds.frameInterval)) {
+				CaptureDiag(L"SaveUserSelectedFormat: requested %s, device kept %s",
+							DescribeMediaType(&m_mtv).GetString(), DescribeMediaType(pmtNow).GetString());
+			}
+			cds = cdsNow;
+		}
+		DeleteMediaType(pmtNow);
+	} else if (!bFilled) {
+		return;
+	}
+
+	m_devSettings = cds;
+	SaveCaptureDeviceSettings(m_devSettings);
 }
 
 void CPlayerCaptureDialog::EnableControls(CWnd* pWnd, bool fEnable)
@@ -1582,7 +1608,7 @@ void CPlayerCaptureDialog::OnForceHdr()
 	UpdateGraph();
 }
 
-void CPlayerCaptureDialog::AdoptDriverFormat(const AM_MEDIA_TYPE* pmt)
+void CPlayerCaptureDialog::AdoptDriverFormat(const AM_MEDIA_TYPE* pmt, bool bPersist)
 {
 	if (!pmt || pmt->majortype != MEDIATYPE_Video) {
 		return;
@@ -1594,7 +1620,7 @@ void CPlayerCaptureDialog::AdoptDriverFormat(const AM_MEDIA_TYPE* pmt)
 	m_bVidUserDims = false;
 	m_bVidUserFps = false;
 
-	if (m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
+	if (bPersist && m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
 		SaveCaptureDeviceSettings(m_devSettings);
 	}
 

@@ -9026,6 +9026,18 @@ void CMainFrame::OnPlayFilters(UINT nID)
 			CleanGraph();
 		}
 
+		// Remember what the device runs at now, so that merely looking at the driver's
+		// page (and cancelling) does not overwrite the stored preference below.
+		CaptureDeviceSettings capBefore;
+		bool bHaveCapBefore = false;
+		if (bCaptureVideoPin) {
+			AM_MEDIA_TYPE* pmtBefore = nullptr;
+			if (SUCCEEDED(m_pAMVSCCap->GetFormat(&pmtBefore)) && pmtBefore) {
+				bHaveCapBefore = FillCaptureSettingsFromMediaType(pmtBefore, capBefore);
+				DeleteMediaType(pmtBefore);
+			}
+		}
+
 		m_pFilterPropSheet = &ps;
 		ps.DoModal();
 		OpenSetupStatusBar();
@@ -9034,8 +9046,18 @@ void CMainFrame::OnPlayFilters(UINT nID)
 		if (bCaptureVideoPin && GetPlaybackMode() == PM_CAPTURE && m_pAMVSCCap) {
 			AM_MEDIA_TYPE* pmt = nullptr;
 			if (SUCCEEDED(m_pAMVSCCap->GetFormat(&pmt)) && pmt) {
-				CaptureDiag(L"OnPlayFilters: adopting driver format %s", DescribeMediaType(pmt).GetString());
-				m_wndCaptureBar.m_capdlg.AdoptDriverFormat(pmt);
+				CaptureDeviceSettings capAfter;
+				const bool bHaveCapAfter = FillCaptureSettingsFromMediaType(pmt, capAfter);
+				const bool bChanged = bHaveCapAfter
+									  && (!bHaveCapBefore
+										  || capAfter.subtype != capBefore.subtype
+										  || capAfter.width != capBefore.width
+										  || capAfter.height != capBefore.height
+										  || capAfter.frameInterval != capBefore.frameInterval);
+
+				CaptureDiag(L"OnPlayFilters: driver format %s (changed=%d)",
+							DescribeMediaType(pmt).GetString(), (int)bChanged);
+				m_wndCaptureBar.m_capdlg.AdoptDriverFormat(pmt, bChanged);
 				DeleteMediaType(pmt);
 			}
 

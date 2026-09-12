@@ -466,8 +466,10 @@ public:
 		return m_devSettings;
 	};
 
-	// takes over a format that was set through the driver's own property page
-	void AdoptDriverFormat(const AM_MEDIA_TYPE* pmt);
+	// Takes over a format that was set through the driver's own property page.
+	// bPersist must only be true when that page really produced a different format:
+	// this is also reached when the user just looked at the page and cancelled.
+	void AdoptDriverFormat(const AM_MEDIA_TYPE* pmt, bool bPersist);
 
 protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
