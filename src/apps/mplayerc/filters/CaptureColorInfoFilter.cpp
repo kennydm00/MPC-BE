@@ -19,6 +19,7 @@
  */
 
 #include "stdafx.h"
+#include <vector>
 #include <moreuuids.h>
 #include "DSUtil/Utils.h"
 #include "CaptureColorInfoFilter.h"
@@ -26,6 +27,40 @@
 static const BITMAPINFOHEADER* GetBIH(const CMediaType* pmt)
 {
 	return GetBitmapInfoHeader(pmt);
+}
+
+// Same job as BaseClasses' ConvertVideoInfoToVideoInfo2(), but without dragging
+// winutil.obj (and with it the DLL only dllentry.obj) into the executable.
+static HRESULT ConvertToVideoInfo2(CMediaType& mt)
+{
+	if (mt.formattype != FORMAT_VideoInfo || !mt.pbFormat || mt.cbFormat < sizeof(VIDEOINFOHEADER)) {
+		return E_INVALIDARG;
+	}
+
+	const ULONG extra = mt.cbFormat - sizeof(VIDEOINFOHEADER);
+	const ULONG cbNew = sizeof(VIDEOINFOHEADER2) + extra;
+
+	std::vector<BYTE> buffer(cbNew, 0);
+
+	const VIDEOINFOHEADER* vih = (const VIDEOINFOHEADER*)mt.pbFormat;
+	VIDEOINFOHEADER2* vih2 = (VIDEOINFOHEADER2*)buffer.data();
+
+	vih2->rcSource        = vih->rcSource;
+	vih2->rcTarget        = vih->rcTarget;
+	vih2->dwBitRate       = vih->dwBitRate;
+	vih2->dwBitErrorRate  = vih->dwBitErrorRate;
+	vih2->AvgTimePerFrame = vih->AvgTimePerFrame;
+	memcpy(&vih2->bmiHeader, &vih->bmiHeader, sizeof(BITMAPINFOHEADER) + extra);
+
+	vih2->dwPictAspectRatioX = (DWORD)vih2->bmiHeader.biWidth;
+	vih2->dwPictAspectRatioY = (DWORD)abs(vih2->bmiHeader.biHeight);
+
+	if (!mt.SetFormat(buffer.data(), cbNew)) {
+		return E_OUTOFMEMORY;
+	}
+	mt.SetFormatType(&FORMAT_VideoInfo2);
+
+	return S_OK;
 }
 
 CCaptureColorInfoFilter::CCaptureColorInfoFilter(LPUNKNOWN punk, HRESULT* phr, DWORD dwControlFlags)
@@ -65,7 +100,7 @@ HRESULT CCaptureColorInfoFilter::MakeTaggedType(const CMediaType* mtIn, CMediaTy
 	*pmtOut = *mtIn;
 
 	if (pmtOut->formattype == FORMAT_VideoInfo) {
-		HRESULT hr = ConvertVideoInfoToVideoInfo2(pmtOut);
+		HRESULT hr = ConvertToVideoInfo2(*pmtOut);
 		if (FAILED(hr)) {
 			return hr;
 		}

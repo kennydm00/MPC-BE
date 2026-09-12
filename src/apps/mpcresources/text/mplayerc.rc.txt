@@ -35,7 +35,7 @@ BEGIN DIALOGEX IDD_AUTH_DLG LINES 15
 14		"Remember my password"
 END
 
-BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 41
+BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 43
 5		"Video"
 14		"Set"
 15		"Audio"
@@ -47,6 +47,8 @@ BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 41
 32		"V/A Buffers:"
 38		"Audio to wav"
 39		"Record"
+41		"Remember format for this device"
+42		"Force HDR10 (BT.2020 / PQ)"
 END
 
 BEGIN DIALOGEX IDD_CMD_LINE_HELP LINES 9

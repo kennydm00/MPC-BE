@@ -136,23 +136,41 @@ namespace {
 			mt.lSampleSize = pBIH->biSizeImage;
 		}
 
-		if (mt.formattype == FORMAT_VideoInfo2) {
-			VIDEOINFOHEADER2* vih2 = (VIDEOINFOHEADER2*)mt.pbFormat;
-			LONG x = width, y = height;
-			ReduceDim(x, y);
-			vih2->dwPictAspectRatioX = x;
-			vih2->dwPictAspectRatioY = y;
-		}
+		RECT* prcSource = nullptr;
+		RECT* prcTarget = nullptr;
 
-		RECT rc = { 0, 0, width, height };
 		if (mt.formattype == FORMAT_VideoInfo) {
 			VIDEOINFOHEADER* vih = (VIDEOINFOHEADER*)mt.pbFormat;
-			if (!IsRectEmpty(&vih->rcSource)) { vih->rcSource = rc; }
-			if (!IsRectEmpty(&vih->rcTarget)) { vih->rcTarget = rc; }
+			prcSource = &vih->rcSource;
+			prcTarget = &vih->rcTarget;
 		} else if (mt.formattype == FORMAT_VideoInfo2) {
 			VIDEOINFOHEADER2* vih2 = (VIDEOINFOHEADER2*)mt.pbFormat;
-			if (!IsRectEmpty(&vih2->rcSource)) { vih2->rcSource = rc; }
-			if (!IsRectEmpty(&vih2->rcTarget)) { vih2->rcTarget = rc; }
+			prcSource = &vih2->rcSource;
+			prcTarget = &vih2->rcTarget;
+
+			// dwPictAspectRatio is the display aspect ratio, not the pixel geometry:
+			// a device that rescales keeps the aspect of its source. Only derive it
+			// from the frame size when the driver left it unset.
+			if (!vih2->dwPictAspectRatioX || !vih2->dwPictAspectRatioY) {
+				LONG x = width, y = height;
+				ReduceDim(x, y);
+				vih2->dwPictAspectRatioX = x;
+				vih2->dwPictAspectRatioY = y;
+			}
+		}
+
+		// Retarget only a rectangle that covers the whole old frame. One that
+		// describes a real crop has to survive the resize untouched.
+		const RECT rc = { 0, 0, width, height };
+		if (prcSource && !IsRectEmpty(prcSource)
+				&& prcSource->left == 0 && prcSource->top == 0
+				&& prcSource->right == oldW && prcSource->bottom == oldH) {
+			*prcSource = rc;
+		}
+		if (prcTarget && !IsRectEmpty(prcTarget)
+				&& prcTarget->left == 0 && prcTarget->top == 0
+				&& prcTarget->right == oldW && prcTarget->bottom == oldH) {
+			*prcTarget = rc;
 		}
 	}
 
@@ -363,12 +381,16 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 		return VFW_E_ALREADY_CONNECTED;
 	}
 
-	// current format, used for the format type tie break
-	GUID currentFormatType = GUID_NULL;
+	// current format, used for the format type tie break and as the rollback target
+	GUID       currentFormatType = GUID_NULL;
+	CMediaType mtOriginal;
+	bool       bHaveOriginal = false;
 	{
 		AM_MEDIA_TYPE* pcurmt = nullptr;
 		if (SUCCEEDED(pAMSC->GetFormat(&pcurmt)) && pcurmt) {
 			currentFormatType = pcurmt->formattype;
+			mtOriginal        = *pcurmt;
+			bHaveOriginal     = true;
 			DeleteMediaType(pcurmt);
 		}
 	}
@@ -417,8 +439,12 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 			cand.sizeScore = 0;
 		} else if (cds.width  >= caps.MinOutputSize.cx && cds.width  <= caps.MaxOutputSize.cx
 				&& cds.height >= caps.MinOutputSize.cy && cds.height <= caps.MaxOutputSize.cy
-				&& (caps.OutputGranularityX <= 1 || ((cds.width  - caps.MinOutputSize.cx) % caps.OutputGranularityX) == 0)
-				&& (caps.OutputGranularityY <= 1 || ((cds.height - caps.MinOutputSize.cy) % caps.OutputGranularityY) == 0)) {
+				&& (caps.OutputGranularityX <= 1
+					|| ((cds.width - caps.MinOutputSize.cx) % caps.OutputGranularityX) == 0
+					|| (cds.width % caps.OutputGranularityX) == 0)
+				&& (caps.OutputGranularityY <= 1
+					|| ((cds.height - caps.MinOutputSize.cy) % caps.OutputGranularityY) == 0
+					|| (cds.height % caps.OutputGranularityY) == 0)) {
 			cand.sizeScore = 1;
 		} else {
 			continue;
@@ -460,6 +486,7 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 	std::stable_sort(candidates.begin(), candidates.end());
 
 	const size_t maxTries = std::min<size_t>(candidates.size(), 4);
+	bool bTouched = false;
 
 	for (size_t i = 0; i < maxTries; i++) {
 		CMediaType mt = candidates[i].mt;
@@ -493,6 +520,7 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 				}
 
 				hr = E_FAIL;
+				bTouched = true; // the driver did take a format, just not the one we asked for
 				line.Append(L" (not accepted)");
 			} else {
 				// cannot verify, trust SetFormat
@@ -506,6 +534,12 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 			why.Append(L"; ");
 		}
 		why.Append(line);
+	}
+
+	if (bTouched && bHaveOriginal) {
+		// do not leave the device on a half applied format nobody asked for
+		const HRESULT hrRestore = pAMSC->SetFormat(&mtOriginal);
+		why.AppendFormat(L"; restore %s -> 0x%08x", DescribeMediaType(&mtOriginal).GetString(), hrRestore);
 	}
 
 	CaptureDiag(L"CaptureFormat: failed - %s", why.GetString());

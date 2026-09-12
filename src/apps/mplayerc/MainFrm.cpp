@@ -17561,10 +17561,12 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 		CaptureDiag(L"BuildGraphVideoAudio: SetFormat(capture) %s -> 0x%08x",
 					DescribeMediaType(&m_wndCaptureBar.m_capdlg.m_mtv).GetString(), hr);
 	}
-	// m_pAMVSCPrev can be the very same object as m_pAMVSCCap (see OpenCapture)
-	if (m_pAMVSCPrev && !m_pAMVSCPrev.IsEqualObject(m_pAMVSCCap)) {
+	// m_pAMVSCPrev is often the very same object as m_pAMVSCCap (see OpenCapture), but
+	// the duplicate call is kept so that the default path behaves exactly as before
+	if (m_pAMVSCPrev) {
 		hr = m_pAMVSCPrev->SetFormat(&m_wndCaptureBar.m_capdlg.m_mtv);
-		CaptureDiag(L"BuildGraphVideoAudio: SetFormat(preview) -> 0x%08x", hr);
+		CaptureDiag(L"BuildGraphVideoAudio: SetFormat(preview%s) -> 0x%08x",
+					m_pAMVSCPrev.IsEqualObject(m_pAMVSCCap) ? L", same pin" : L"", hr);
 	}
 	if (m_pAMASC) {
 		hr = m_pAMASC->SetFormat(&m_wndCaptureBar.m_capdlg.m_mta);
@@ -17624,6 +17626,17 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 		CComPtr<IPin> pRenderPin = pVidPrevPin;
 
 		if (m_wndCaptureBar.m_capdlg.GetDeviceSettings().bForceHDR) {
+			// Renderers evaluate VIDEOINFOHEADER2::dwControlFlags for YUV formats only
+			// (MPC Video Renderer discards the extended format for RGB), so tagging an
+			// RGB capture stream cannot change anything. Say so instead of failing quietly.
+			const GUID& capSubtype = m_wndCaptureBar.m_capdlg.m_mtv.subtype;
+			if (capSubtype == MEDIASUBTYPE_RGB32 || capSubtype == MEDIASUBTYPE_ARGB32
+					|| capSubtype == MEDIASUBTYPE_RGB24 || capSubtype == MEDIASUBTYPE_RGB565
+					|| capSubtype == MEDIASUBTYPE_RGB555 || capSubtype == MEDIASUBTYPE_RGB8) {
+				CaptureDiag(L"BuildGraphVideoAudio: Force HDR10 has no effect on RGB capture formats (%s)",
+							DescribeMediaType(&m_wndCaptureBar.m_capdlg.m_mtv).GetString());
+			}
+
 			CComPtr<IBaseFilter> pTag;
 			CComPtr<IPin> pTagOut;
 			const HRESULT hrTag = InsertCaptureColorInfoFilter(pVidPrevPin, &pTag, &pTagOut);

@@ -592,6 +592,7 @@ BOOL CPlayerCaptureDialog::PreTranslateMessage(MSG* pMsg)
 			if (pFocused && pFocused->m_hWnd == m_vidfpsedit.m_hWnd) {
 				m_bVidUserFps = true;
 				UpdateGraph();
+				SaveUserSelectedFormat();
 			}
 		}
 	}
@@ -704,7 +705,9 @@ void CPlayerCaptureDialog::EmptyVideo()
 		m_vidveredit.EnableWindow(FALSE);
 		m_vidfpsedit.EnableWindow(FALSE);
 		m_vidfps = 0;
+		m_bSyncingVidControls = true;
 		m_vidfpsedit.SetWindowTextW(L"");
+		m_bSyncingVidControls = false;
 		m_vidsetres.EnableWindow(FALSE);
 		m_vidremember.SetCheck(BST_UNCHECKED);
 		m_vidremember.EnableWindow(FALSE);
@@ -784,10 +787,12 @@ void CPlayerCaptureDialog::UpdateMediaTypes()
 									: (pmt->formattype == FORMAT_VideoInfo2)
 									? &((VIDEOINFOHEADER2*)pmt->pbFormat)->bmiHeader
 									: nullptr;
-			if (bih && m_bVidUserDims) {
+			const int userWidth = m_vidhor.GetPos32();
+			const int userHeight = m_vidver.GetPos32();
+			if (bih && m_bVidUserDims && userWidth > 0 && userHeight > 0) {
 				const int sign = bih->biHeight < 0 ? -1 : 1;
-				bih->biWidth = m_vidhor.GetPos32();
-				bih->biHeight = sign * m_vidver.GetPos32();
+				bih->biWidth = userWidth;
+				bih->biHeight = sign * userHeight;
 				bih->biSizeImage = bih->biWidth*abs(bih->biHeight)*bih->biBitCount>>3;
 			}
 			if (!m_devSettings.bExplicit) {
@@ -860,6 +865,8 @@ void CPlayerCaptureDialog::UpdateUserDefinableControls()
 	UNREFERENCED_PARAMETER(w);
 	UNREFERENCED_PARAMETER(h);
 
+	m_bSyncingVidControls = true;
+
 	m_vidhor.SetRange32(pvfe->caps.MinOutputSize.cx, pvfe->caps.MaxOutputSize.cx);
 	/*
 	// FIXME: bt8x8 drivers seem to crop the right side in yuv2 mode if the width is not dividable by 64
@@ -884,6 +891,8 @@ void CPlayerCaptureDialog::UpdateUserDefinableControls()
 	CString fps;
 	fps.Format(L"%.4f", (float)(10000000.0 / ((VIDEOINFOHEADER*)pmt->pbFormat)->AvgTimePerFrame));
 	m_vidfpsedit.SetWindowText(fps);
+
+	m_bSyncingVidControls = false;
 
 	DeleteMediaType(pmt);
 }
@@ -965,13 +974,19 @@ void CPlayerCaptureDialog::UpdateGraph()
 {
 	UpdateMediaTypes();
 
-	if (m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
-		SaveCaptureDeviceSettings(m_devSettings);
-	}
-
 	m_pMainFrame->BuildGraphVideoAudio(m_fVidPreview, false, m_fAudPreview, false);
 
 	UpdateUserDefinableControls();
+}
+
+void CPlayerCaptureDialog::SaveUserSelectedFormat()
+{
+	// m_mtv only reflects a deliberate choice on the type/dimension/fps paths. On any
+	// other rebuild it is whatever the driver currently reports, which must never
+	// overwrite a stored preference (e.g. when the source is temporarily absent).
+	if (m_devSettings.bExplicit && FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
+		SaveCaptureDeviceSettings(m_devSettings);
+	}
 }
 
 void CPlayerCaptureDialog::EnableControls(CWnd* pWnd, bool fEnable)
@@ -1363,6 +1378,9 @@ BEGIN_MESSAGE_MAP(CPlayerCaptureDialog, CResizableDialog)
 	ON_BN_CLICKED(IDC_BUTTON1, OnOverrideVideoDimension)
 	ON_BN_CLICKED(IDC_CHECK6, OnRememberFormat)
 	ON_BN_CLICKED(IDC_CHECK7, OnForceHdr)
+	ON_EN_CHANGE(IDC_EDIT1, OnUserVidDims)
+	ON_EN_CHANGE(IDC_EDIT2, OnUserVidDims)
+	ON_EN_CHANGE(IDC_EDIT3, OnUserVidFps)
 	ON_CBN_SELCHANGE(IDC_COMBO3, OnAudioInput)
 	ON_CBN_SELCHANGE(IDC_COMBO2, OnAudioType)
 	ON_CBN_SELCHANGE(IDC_COMBO6, OnAudioDimension)
@@ -1497,6 +1515,8 @@ void CPlayerCaptureDialog::OnVideoDimension()
 		return;
 	}
 
+	m_bSyncingVidControls = true;
+
 	m_vidhor.SetRange32(0, UD_MAXVAL);
 	m_vidver.SetRange32(0, UD_MAXVAL);
 	m_vidhor.SetPos32(bih->biWidth);
@@ -1505,11 +1525,14 @@ void CPlayerCaptureDialog::OnVideoDimension()
 	fps.Format(L"%.4f", (float)(10000000.0 / ((VIDEOINFOHEADER*)pvfe->mt.pbFormat)->AvgTimePerFrame));
 	m_vidfpsedit.SetWindowText(fps);
 
+	m_bSyncingVidControls = false;
+
 	// these values come from the selected capability, not from the user
 	m_bVidUserDims = false;
 	m_bVidUserFps = false;
 
 	UpdateGraph();
+	SaveUserSelectedFormat();
 }
 
 void CPlayerCaptureDialog::OnOverrideVideoDimension()
@@ -1518,14 +1541,32 @@ void CPlayerCaptureDialog::OnOverrideVideoDimension()
 	m_bVidUserFps = true;
 
 	UpdateGraph();
+	SaveUserSelectedFormat();
+}
+
+void CPlayerCaptureDialog::OnUserVidDims()
+{
+	if (!m_bSyncingVidControls) {
+		m_bVidUserDims = true;
+	}
+}
+
+void CPlayerCaptureDialog::OnUserVidFps()
+{
+	if (!m_bSyncingVidControls) {
+		m_bVidUserFps = true;
+	}
 }
 
 void CPlayerCaptureDialog::OnRememberFormat()
 {
 	m_devSettings.bExplicit = (m_vidremember.GetCheck() == BST_CHECKED);
 
-	if (m_devSettings.bExplicit) {
-		FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings);
+	if (m_devSettings.bExplicit && !FillCaptureSettingsFromMediaType(&m_mtv, m_devSettings)) {
+		// no usable video media type yet, so there is nothing to remember
+		CaptureDiag(L"OnRememberFormat: no video format available to store");
+		m_devSettings.bExplicit = false;
+		m_vidremember.SetCheck(BST_UNCHECKED);
 	}
 
 	SaveCaptureDeviceSettings(m_devSettings);

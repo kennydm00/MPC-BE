@@ -35,7 +35,7 @@ BEGIN DIALOGEX IDD_AUTH_DLG LINES 15
 14		"Kennwort &speichern"
 END
 
-BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 41
+BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 43
 5		"Video"
 14		"Setzen"
 15		"Audio"
@@ -47,6 +47,8 @@ BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 41
 32		"V/A Puffer:"
 38		"Audio zu WAV"
 39		"Aufnahme"
+41		"Format für dieses Gerät merken"
+42		"HDR10 erzwingen (BT.2020 / PQ)"
 END
 
 BEGIN DIALOGEX IDD_CMD_LINE_HELP LINES 9

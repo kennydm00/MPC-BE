@@ -374,6 +374,9 @@ private:
 	// after the user actually changed them
 	bool m_bVidUserDims = false;
 	bool m_bVidUserFps = false;
+	// true while we fill those controls ourselves, so the EN_CHANGE handlers
+	// can tell our own writes from the user's
+	bool m_bSyncingVidControls = false;
 
 	// video input
 	CStringW m_vidDisplayName;
@@ -410,6 +413,9 @@ private:
 	void UpdateOutputControls();
 
 	void UpdateGraph();
+	// stores the current video media type in the per device settings; only called
+	// from the paths on which the user really did pick a format
+	void SaveUserSelectedFormat();
 
 	std::map<HWND, BOOL> m_wndenabledmap;
 	void EnableControls(CWnd* pWnd, bool fEnable);
@@ -479,6 +485,8 @@ protected:
 	afx_msg void OnOverrideVideoDimension();
 	afx_msg void OnRememberFormat();
 	afx_msg void OnForceHdr();
+	afx_msg void OnUserVidDims();
+	afx_msg void OnUserVidFps();
 	afx_msg void OnAudioInput();
 	afx_msg void OnAudioType();
 	afx_msg void OnAudioDimension();
