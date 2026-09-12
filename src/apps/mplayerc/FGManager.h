@@ -63,6 +63,7 @@ private:
 protected:
 	CComPtr<IFilterMapper2> m_pFM;
 	std::list<CComQIPtr<IUnknown, &IID_IUnknown>> m_pUnks;
+	bool m_bVRLoadFailed = false; // the "has failed to load" message was already shown for this graph
 	std::list<CFGFilter*> m_source, m_transform, m_override;
 
 	bool CheckBytes(HANDLE hFile, CString chkbytes);

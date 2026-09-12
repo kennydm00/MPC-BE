@@ -1085,6 +1085,13 @@ HRESULT CFGManager::ConnectInternal(IPin* pPinOut, IPin* pPinIn, bool bContinueR
 				// Check if selected video renderer fails to load
 				CLSID filter = pFGF->GetCLSID();
 				if (IsVideoRenderer(filter)) {
+					// One report per graph: a single build can attempt the renderer more
+					// than once, and every attempt would put up the same message box.
+					if (m_bVRLoadFailed) {
+						return E_ABORT;
+					}
+					m_bVRLoadFailed = true;
+
 					if (filter == CLSID_EVRAllocatorPresenter) {
 						if (IDYES == AfxMessageBox(
 								L"The Enhanced Video Renderer (custom presenter) has failed to load.\n\n"

@@ -326,11 +326,14 @@ DWORD MakeHdr10ControlFlags()
 {
 	DXVA2_ExtendedFormat exfmt = {};
 
-	exfmt.SampleFormat          = AMCONTROL_USED | AMCONTROL_COLORINFO_PRESENT;
-	exfmt.NominalRange          = DXVA2_NominalRange_16_235;       // 2
-	exfmt.VideoTransferMatrix   = MFVideoTransferMatrix_BT2020_10; // 4
-	exfmt.VideoPrimaries        = MFVideoPrimaries_BT2020;         // 9
-	exfmt.VideoTransferFunction = MFVideoTransFunc_2084;           // 15
+	exfmt.SampleFormat            = AMCONTROL_USED | AMCONTROL_COLORINFO_PRESENT;
+	exfmt.NominalRange            = DXVA2_NominalRange_16_235;         // 2
+	exfmt.VideoTransferMatrix     = MFVideoTransferMatrix_BT2020_10;   // 4
+	exfmt.VideoPrimaries          = MFVideoPrimaries_BT2020;           // 9
+	exfmt.VideoTransferFunction   = MFVideoTransFunc_2084;             // 15
+	// the siting HDMI sources use, and the one renderers assume for 4:2:0 anyway;
+	// stating it explicitly just stops them from having to guess
+	exfmt.VideoChromaSubsampling  = DXVA2_VideoChromaSubsampling_MPEG2; // 5
 
 	return exfmt.value;
 }

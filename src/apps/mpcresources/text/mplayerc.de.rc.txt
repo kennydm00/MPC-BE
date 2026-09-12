@@ -47,8 +47,8 @@ BEGIN DIALOGEX IDD_CAPTURE_DLG LINES 43
 32		"V/A Puffer:"
 38		"Audio zu WAV"
 39		"Aufnahme"
-41		"Format für dieses Gerät merken"
-42		"HDR10 erzwingen (BT.2020 / PQ)"
+41		"Für dieses Gerät merken"
+42		"HDR10 erzwingen (PQ)"
 END
 
 BEGIN DIALOGEX IDD_CMD_LINE_HELP LINES 9

@@ -17507,6 +17507,17 @@ void CMainFrame::ReleaseCapturePreviewInterfaces()
 	m_pMFVP.Release();
 	m_pMFVDC.Release();
 	m_pQP.Release();
+
+	// SetupFiltersSubMenu() keeps a strong reference to every filter of the graph and is
+	// called after every open whether or not the user ever looks at the Filters menu, so
+	// it also holds the video renderer. Those references survive NukeDownstream(), and a
+	// renderer that allows only one instance at a time (MPC Video Renderer) then refuses
+	// to load into the rebuilt graph. Both vectors are rebuilt whenever the submenu is
+	// shown, so dropping them here is safe.
+	// Keep this last: releasing the interfaces above must happen while the filter objects
+	// are still alive.
+	m_pparray.clear();
+	m_ssarray.clear();
 }
 
 // Inserts the colorimetry tagging filter between the capture Smart Tee and the renderer.
@@ -17572,6 +17583,12 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 	}
 
 	HRESULT hr;
+
+	// Drop every reference to the old preview chain before the filters leave the graph,
+	// so that removing them really destroys the old video renderer. This is the order
+	// OnPlayFilters() already uses, and unlike the old placement it also runs when the
+	// preview is switched off.
+	ReleaseCapturePreviewInterfaces();
 
 	m_pGB->NukeDownstream(m_pVidCap);
 	m_pGB->NukeDownstream(m_pAudCap);
@@ -17642,8 +17659,6 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 		CComPtr<IMFVideoMixerBitmap> pMFVMB;
 		CComPtr<IMadVRTextOsd>       pMVTO;
 
-		ReleaseCapturePreviewInterfaces();
-
 		CComPtr<IBaseFilter> pColorInfoTag;
 		CComPtr<IPin> pRenderPin = pVidPrevPin;
 
@@ -17672,11 +17687,18 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 		hr = m_pGB->Render(pRenderPin);
 
 		if (FAILED(hr) && pColorInfoTag) {
-			CaptureDiag(L"BuildGraphVideoAudio: Render() failed (0x%08x), retrying without color info filter", hr);
+			CaptureDiag(L"BuildGraphVideoAudio: Render() failed (0x%08x), removing color info filter", hr);
 			m_pGB->NukeDownstream(pColorInfoTag);
 			m_pGB->RemoveFilter(pColorInfoTag);
 			pColorInfoTag.Release();
-			hr = m_pGB->Render(pVidPrevPin);
+
+			// E_ABORT means the graph manager could not create the video renderer at all
+			// and has already reported it. The tagging filter is not to blame, and with a
+			// renderer that allows only one instance a retry would just fail again and
+			// report it a second time. Retry only when the tagging filter was refused.
+			if (hr != E_ABORT) {
+				hr = m_pGB->Render(pVidPrevPin);
+			}
 		}
 
 		m_pGB->FindInterface(IID_PPV_ARGS(&m_pCAP), TRUE);
