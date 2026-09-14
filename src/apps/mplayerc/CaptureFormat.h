@@ -67,6 +67,16 @@ HRESULT ApplyCaptureFormat(IAMStreamConfig* pAMSC, const CaptureDeviceSettings& 
 // true when the pin behind the IAMStreamConfig is already connected (SetFormat must not be used then).
 bool IsStreamConfigPinConnected(IAMStreamConfig* pAMSC);
 
+// AVerMedia capture devices convert HDR to SDR internally unless that is switched off.
+// After a reboot the conversion is on, so a P010 stream tagged as BT.2020/PQ describes
+// pixels that have already been tone mapped - the reason MPC-BE used to need AVerMedia
+// Streaming Center to be started once. The device is recognised through
+// IKsPropertySet::QuerySupported() and never by its name, and the property has to be set
+// while the capture pin is disconnected.
+// Returns S_FALSE when the device does not expose the property and nothing was changed,
+// S_OK when it was set, and the failing HRESULT otherwise.
+HRESULT SetCaptureVendorHdrToSdr(IBaseFilter* pCaptureFilter, bool bHdrToSdr);
+
 // VIDEOINFOHEADER2::dwControlFlags for BT.2020 matrix + BT.2020 primaries +
 // SMPTE ST 2084 (PQ) + 16-235, marked as present (packed DXVA2_ExtendedFormat).
 DWORD MakeHdr10ControlFlags();

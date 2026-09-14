@@ -758,6 +758,7 @@ public:
 	bool StopCapture();
 	void ReleaseCapturePreviewInterfaces();
 	HRESULT InsertCaptureColorInfoFilter(IPin* pTeeOutPin, IBaseFilter** ppTagFilter, IPin** ppRenderPin);
+	void ApplyCaptureVendorHdrState(bool bCaptureIsHdr, LPCWSTR context);
 
 	bool DoAfterPlaybackEvent();
 	void ParseDirs(std::list<CString>& sl);

@@ -22,6 +22,7 @@
 #include <d3d9.h>    // dxva2api.h needs the D3D9 types
 #include <dxva2api.h>
 #include <evr.h>
+#include <ks.h>
 #include <vector>
 #include <algorithm>
 #include "DSUtil/Utils.h"
@@ -320,6 +321,48 @@ bool IsStreamConfigPinConnected(IAMStreamConfig* pAMSC)
 	}
 
 	return false;
+}
+
+HRESULT SetCaptureVendorHdrToSdr(IBaseFilter* pCaptureFilter, bool bHdrToSdr)
+{
+	if (!pCaptureFilter) {
+		return E_POINTER;
+	}
+
+	// Vendor property set of the AVerMedia capture drivers. Property 2 is what their
+	// Streaming Center calls "HDR Recording Mode":
+	// AVTSDK::Device::Controller::AvtAVTDeviceController::setHDRToSDR(). Both payloads
+	// below are the ones that tool puts on the wire; every other byte is zero in both
+	// directions.
+	static const GUID AVT_HDR_PROPERTY_SET = {
+		0x8a80d56f, 0xfac5, 0x4692, {0xa4, 0x16, 0xcf, 0x20, 0xd4, 0xa1, 0x8f, 0x47}
+	};
+	static const DWORD AVT_HDR_PROPERTY_ID = 2;
+
+	CComQIPtr<IKsPropertySet> pKsPS = pCaptureFilter;
+	if (!pKsPS) {
+		return S_FALSE;
+	}
+
+	// Capability check instead of a device name: a driver that does not know this
+	// property set answers with an error here and is left completely untouched.
+	DWORD support = 0;
+	if (FAILED(pKsPS->QuerySupported(AVT_HDR_PROPERTY_SET, AVT_HDR_PROPERTY_ID, &support))
+			|| !(support & KSPROPERTY_SUPPORT_SET)) {
+		return S_FALSE;
+	}
+
+	ULONGLONG instanceData = bHdrToSdr ? 1 : 0;
+
+	DWORD propertyData[8] = {};
+	propertyData[6] = bHdrToSdr ? 1 : 0; // the DWORD at offset 0x18
+
+	const HRESULT hr = pKsPS->Set(AVT_HDR_PROPERTY_SET, AVT_HDR_PROPERTY_ID,
+								  &instanceData, sizeof(instanceData),
+								  propertyData, sizeof(propertyData));
+
+	// do not let a successful Set() look like "device does not have the property"
+	return SUCCEEDED(hr) ? S_OK : hr;
 }
 
 DWORD MakeHdr10ControlFlags()

@@ -13426,6 +13426,15 @@ void CMainFrame::OpenSetupToolBar()
 void CMainFrame::OpenSetupCaptureBar()
 {
 	if (GetPlaybackMode() == PM_CAPTURE) {
+		if (m_pVidCap) {
+			// Before the format is picked below, because a device may well enumerate
+			// different capabilities in its two states. The capture dialog only loads the
+			// per device settings in SetupVideoControls(), so read them here.
+			CaptureDeviceSettings cds;
+			LoadCaptureDeviceSettings(m_VidDispName, cds);
+			ApplyCaptureVendorHdrState(cds.bForceHDR, L"OpenSetupCaptureBar");
+		}
+
 		if (m_pVidCap && m_pAMVSCCap) {
 			CComQIPtr<IAMVfwCaptureDialogs> pVfwCD = m_pVidCap.p;
 
@@ -17570,6 +17579,24 @@ HRESULT CMainFrame::InsertCaptureColorInfoFilter(IPin* pTeeOutPin, IBaseFilter**
 	return S_OK;
 }
 
+// Let the capture device know whether MPC-BE is about to use it as an HDR source.
+// Devices that do not have the vendor property are not touched, and a failure here is
+// never a reason to give up on the graph, so there is nothing to report to the caller.
+// The capture pin must be disconnected when this runs.
+void CMainFrame::ApplyCaptureVendorHdrState(bool bCaptureIsHdr, LPCWSTR context)
+{
+	if (!m_pVidCap) {
+		return;
+	}
+
+	const HRESULT hr = SetCaptureVendorHdrToSdr(m_pVidCap, !bCaptureIsHdr);
+
+	if (hr != S_FALSE) { // S_FALSE: not one of those devices, saying so every time is just noise
+		CaptureDiag(L"%s: vendor HDR to SDR conversion %s -> 0x%08x",
+					context, bCaptureIsHdr ? L"off" : L"on", hr);
+	}
+}
+
 bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPreview, bool fACapture)
 {
 	if (!m_pCGB) {
@@ -17594,6 +17621,12 @@ bool CMainFrame::BuildGraphVideoAudio(int fVPreview, bool fVCapture, int fAPrevi
 	m_pGB->NukeDownstream(m_pAudCap);
 
 	CleanGraph();
+
+	// The capture pins are disconnected again at this point, which is what both the
+	// vendor property and the SetFormat() calls below need. Doing it on every rebuild
+	// keeps the device state and the "Force HDR10" checkbox in sync, in both directions.
+	ApplyCaptureVendorHdrState(m_wndCaptureBar.m_capdlg.GetDeviceSettings().bForceHDR,
+							   L"BuildGraphVideoAudio");
 
 	if (m_pAMVSCCap) {
 		hr = m_pAMVSCCap->SetFormat(&m_wndCaptureBar.m_capdlg.m_mtv);
