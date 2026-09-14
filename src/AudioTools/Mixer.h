@@ -28,20 +28,22 @@ struct SwrContext;
 class CMixer
 {
 private:
-	SwrContext* m_pSWRCxt;
-	double* m_matrix_dbl;
-	double  m_center_level;
-	double  m_surround_level;
-	bool    m_normalize_matrix;
-	bool    m_dummy_channels;
-	bool    m_ActualContext;
+	SwrContext* m_pSWRCxt      = nullptr;
+	double* m_matrix_dbl       = nullptr;
+	double  m_center_level     = 1.0;
+	double  m_surround_level   = 1.0;
+	bool    m_normalize_matrix = false;
+	bool    m_dummy_channels   = false;
+	bool    m_ActualContext    = false;
 
-	SampleFormat m_in_sf;
-	SampleFormat m_out_sf;
-	uint64_t m_in_layout;
-	uint32_t m_out_layout;
-	int     m_in_samplerate;
-	int     m_out_samplerate;
+	SampleFormat m_in_sf     = SAMPLE_FMT_NONE;
+	SampleFormat m_out_sf    = SAMPLE_FMT_NONE;
+	uint64_t m_in_layout     = 0;
+	uint32_t m_out_layout    = 0;
+	int     m_in_channels    = 0;
+	int     m_out_channels   = 0;
+	int     m_in_samplerate  = 0;
+	int     m_out_samplerate = 0;
 
 	enum AVSampleFormat m_in_avsf;
 	enum AVSampleFormat m_out_avsf;
@@ -62,6 +64,7 @@ public:
 	void UpdateOutput(SampleFormat out_sf, uint32_t out_layout, int out_samplerate = 48000);
 
 	int  Mixing(BYTE* pOutput, int out_samples, const BYTE* pInput, int in_samples);
+	int  Mixing(BYTE* pOutput, int out_samples, const BYTE** ppInput, int in_samples);
 
 	int     Receive(BYTE* pOutput, int out_samples); // needed when using resampling
 	int64_t GetDelay();                              // needed when using resampling
