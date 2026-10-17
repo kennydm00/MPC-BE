@@ -23,6 +23,8 @@
 #include "MainFrm.h"
 #include "PPageInterface.h"
 #include "DSUtil/SysVersion.h"
+#include "controls/DarkTheme.h"
+#include <ExtLib/ui/TreePropSheet/PropPageFrameDefault.h>
 
 // CPPageInterface dialog
 
@@ -46,8 +48,8 @@ void CPPageInterface::DoDataExchange(CDataExchange* pDX)
 	DDX_Slider(pDX, IDC_SLIDER3, m_nThemeGreen);
 	DDX_Slider(pDX, IDC_SLIDER4, m_nThemeBlue);
 	DDX_Control(pDX, IDC_CHECK4, m_chkDarkMenu);
-	DDX_Control(pDX, IDC_CHECK7, m_chkDarkMenuBlurBehind);
 	DDX_Control(pDX, IDC_CHECK5, m_chkDarkTitle);
+	DDX_Control(pDX, IDC_CHECK_DARKDIALOGS, m_chkDarkDialogs);
 
 	DDX_Control(pDX, IDC_SLIDER1, m_ThemeBrightnessCtrl);
 	DDX_Control(pDX, IDC_SLIDER2, m_ThemeRedCtrl);
@@ -82,13 +84,22 @@ BOOL CPPageInterface::OnInitDialog()
 	m_nThemeGreen			= m_nThemeGreen_Old			= s.nThemeGreen;
 	m_nThemeBlue			= m_nThemeBlue_Old			= s.nThemeBlue;
 	m_chkDarkMenu.SetCheck(s.bDarkMenu);
-	//m_chkDarkMenuBlurBehind.SetCheck(s.bDarkMenuBlurBehind);
 	m_chkDarkTitle.SetCheck(s.bDarkTitle);
+	m_chkDarkDialogs.SetCheck(s.bDarkDialogs);
 
 	m_ThemeBrightnessCtrl.SetRange	(0, 100, TRUE);
 	m_ThemeRedCtrl.SetRange			(0, 255, TRUE);
 	m_ThemeGreenCtrl.SetRange		(0, 255, TRUE);
 	m_ThemeBlueCtrl.SetRange		(0, 255, TRUE);
+
+	// Owner-draw the theme sliders deterministically. Relying on NM_CUSTOMDRAW left the active
+	// slider's background unpainted (white) on some repaints and didn't refresh the others; the
+	// subclass always fills the themed background, so all four stay consistent.
+	DarkTheme::MakeTrackbarOwnerDrawn(m_ThemeBrightnessCtrl.GetSafeHwnd(), true);
+	DarkTheme::MakeTrackbarOwnerDrawn(m_ThemeRedCtrl.GetSafeHwnd(), true);
+	DarkTheme::MakeTrackbarOwnerDrawn(m_ThemeGreenCtrl.GetSafeHwnd(), true);
+	DarkTheme::MakeTrackbarOwnerDrawn(m_ThemeBlueCtrl.GetSafeHwnd(), true);
+	DarkTheme::CommitThemeColors(); // initial snapshot for the sliders
 
 	m_clrFaceABGR			= m_clrFaceABGR_Old			= s.clrFaceABGR;
 	m_clrOutlineABGR		= m_clrOutlineABGR_Old		= s.clrOutlineABGR;
@@ -133,12 +144,8 @@ BOOL CPPageInterface::OnInitDialog()
 
 	if (!SysVersion::IsWin10v1809orLater()) {
 		m_chkDarkTitle.EnableWindow(FALSE);
+		m_chkDarkDialogs.EnableWindow(FALSE);
 	}
-
-//	if (!SysVersion::IsWin10orLater()) {
-//		m_chkDarkMenuBlurBehind.EnableWindow(FALSE);
-//	}
-	m_chkDarkMenuBlurBehind.ShowWindow(SW_HIDE);
 
 	UpdateData(FALSE);
 
@@ -170,8 +177,19 @@ BOOL CPPageInterface::OnApply()
 		::PostMessageW(pFrame->m_hWnd,         WM_SIZE, s.nLastWindowType, MAKELPARAM(s.szLastWindowSize.cx, s.szLastWindowSize.cy));
 	}
 	s.bDarkMenu = !!m_chkDarkMenu.GetCheck();
-	//s.bDarkMenuBlurBehind = !!m_chkDarkMenuBlurBehind.GetCheck();
 	s.bDarkTitle = !!m_chkDarkTitle.GetCheck();
+	const bool bDarkDialogs = s.bDarkDialogs;
+	s.bDarkDialogs = !!m_chkDarkDialogs.GetCheck();
+
+	// If either toggle that decides the dialog theme changed while the Options dialog is still
+	// open, re-theme the whole property sheet so it doesn't end up a mix of light and dark
+	// controls. GA_ROOT gives the sheet's top-level window (the pages live under it).
+	if (!!s.bUseDarkTheme != !!bUseDarkTheme || s.bDarkDialogs != bDarkDialogs) {
+		TreePropSheet::CPropPageFrameDefault::s_bDarkMode = DarkTheme::IsActive();
+		TreePropSheet::CPropPageFrameDefault::s_clrFace   = DarkTheme::FaceColor();
+		TreePropSheet::CPropPageFrameDefault::s_clrText   = DarkTheme::TextColor();
+		DarkTheme::RefreshTheme(::GetAncestor(GetSafeHwnd(), GA_ROOT));
+	}
 
 	s.fUseWin7TaskBar		= !!m_fUseWin7TaskBar;
 	s.fUseTimeTooltip		= !!m_fUseTimeTooltip;
@@ -214,14 +232,25 @@ BOOL CPPageInterface::OnApply()
 
 	pFrame->m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
 
-	pFrame->m_wndPlaylistBar.m_bUseDarkTheme = s.bUseDarkTheme;
+	// Update every docking bar's dark-frame flag (not just the playlist bar) so the Shader Editor,
+	// Capture, Navigation and Subresync bar frames follow the theme toggle too, then repaint them.
+	for (const auto& pDockingBar : pFrame->m_dockingbars) {
+		pDockingBar->m_bUseDarkTheme = (pDockingBar == &pFrame->m_wndPlaylistBar) ? s.bUseDarkTheme : DarkTheme::IsActive();
+		// The frame flag above doesn't reach what the bar hosts: the Shader editor and Capture
+		// dialogs and the Subresync list are created once at startup and themed then, so a dialog
+		// created with the option off stayed light inside a dark frame after turning it on (and the
+		// list stayed dark after turning it off). Re-apply or strip to match.
+		if (auto* pPlayerBar = dynamic_cast<CPlayerBar*>(pDockingBar)) {
+			pPlayerBar->RefreshDarkTheme();
+		}
+		if (pDockingBar->IsWindowVisible()) {
+			pDockingBar->SendMessageW(WM_NCPAINT, 1, NULL);
+			pDockingBar->RedrawWindow(nullptr, nullptr, RDW_ERASE | RDW_INVALIDATE);
+			pDockingBar->Invalidate();
+		}
+	}
 	pFrame->SetColor();
 	pFrame->SetColorTitle();
-	if (pFrame->m_wndPlaylistBar.IsWindowVisible()) {
-		pFrame->m_wndPlaylistBar.SendMessageW(WM_NCPAINT, 1, NULL);
-		pFrame->m_wndPlaylistBar.RedrawWindow(nullptr, nullptr, RDW_ERASE | RDW_INVALIDATE);
-		pFrame->m_wndPlaylistBar.Invalidate();
-	}
 
 	pFrame->ResetMenu();
 	pFrame->m_wndStatusBar.SetMenu();
@@ -286,6 +315,10 @@ void CPPageInterface::OnThemeChange()
 
 	pFrame->Invalidate();
 	pFrame->m_wndPlaylistBar.Invalidate();
+
+	// OnThemeChange runs on every slider tick to keep the player live. The Options sheet is
+	// re-tinted separately, when the drag ends (see OnHScroll), because repainting its standard
+	// controls on every tick flickers (they aren't double-buffered like the player's).
 }
 
 BEGIN_MESSAGE_MAP(CPPageInterface, CPPageBase)
@@ -323,11 +356,9 @@ void CPPageInterface::OnUpdateCheck3(CCmdUI* pCmdUI)
 	GetDlgItem(IDC_STATIC8)->EnableWindow(bUseDarkTheme);
 	GetDlgItem(IDC_CONTROLS_SIZE_COMBO)->EnableWindow(bUseDarkTheme);
 	m_chkDarkMenu.EnableWindow(bUseDarkTheme);
-//	if (SysVersion::IsWin10orLater()) {
-//		m_chkDarkMenuBlurBehind.EnableWindow(bUseDarkTheme && m_chkDarkMenu.GetCheck());
-//	}
 	if (SysVersion::IsWin10v1809orLater()) {
 		m_chkDarkTitle.EnableWindow(bUseDarkTheme);
+		m_chkDarkDialogs.EnableWindow(bUseDarkTheme);
 	}
 }
 
@@ -357,6 +388,19 @@ void CPPageInterface::OnClickClrDefault()
 	m_clrOutlineABGR_Old	= s.clrOutlineABGR;
 
 	UpdateData(FALSE);
+
+	// Reset is a one-shot (not a drag), so re-tint the Options sheet to the default colours here.
+	if (DarkTheme::IsActive()) {
+		DarkTheme::CommitThemeColors();
+		if (HWND hSheet = ::GetAncestor(GetSafeHwnd(), GA_ROOT)) {
+			TreePropSheet::CPropPageFrameDefault::s_clrFace = DarkTheme::FaceColor();
+			DarkTheme::RefreshColors(hSheet);
+		}
+		m_ThemeBrightnessCtrl.Invalidate();
+		m_ThemeRedCtrl.Invalidate();
+		m_ThemeGreenCtrl.Invalidate();
+		m_ThemeBlueCtrl.Invalidate();
+	}
 }
 
 void CPPageInterface::OnClickClrFace()
@@ -400,9 +444,15 @@ void CPPageInterface::OnCustomDrawBtns(NMHDR *pNMHDR, LRESULT *pResult)
 			dc.Attach(pNMCD->hdc);
 			CRect r;
 			CopyRect(&r,&pNMCD->rc);
-			CPen penFrEnabled (PS_SOLID, 0, GetSysColor(COLOR_BTNTEXT));
-			CPen penFrDisabled (PS_SOLID, 0, GetSysColor(COLOR_BTNSHADOW));
+			const bool bDark = DarkTheme::IsActive();
+			CPen penFrEnabled (PS_SOLID, 0, bDark ? DarkTheme::CtrlBorderColor() : GetSysColor(COLOR_BTNTEXT));
+			CPen penFrDisabled (PS_SOLID, 0, bDark ? DarkTheme::CtrlBorderColor() : GetSysColor(COLOR_BTNSHADOW));
 			CPen *penOld = dc.SelectObject(&penFrEnabled);
+			CBrush brBack(bDark ? DarkTheme::FaceColor() : GetSysColor(COLOR_3DFACE));
+			CBrush* pOldBrush = dc.SelectObject(&brBack);
+			if (bDark) {
+				dc.FillSolidRect(&r, DarkTheme::FaceColor()); // avoid a light ring around the rounded swatch
+			}
 
 			if (CDIS_HOT == pNMCD->uItemState || CDIS_HOT + CDIS_FOCUS == pNMCD->uItemState || CDIS_DISABLED == pNMCD->uItemState) {
 				dc.SelectObject(&penFrDisabled);
@@ -418,6 +468,7 @@ void CPPageInterface::OnCustomDrawBtns(NMHDR *pNMHDR, LRESULT *pResult)
 			}
 
 			dc.SelectObject(&penOld);
+			dc.SelectObject(pOldBrush);
 			dc.Detach();
 
 			*pResult = CDRF_SKIPDEFAULT;
@@ -476,6 +527,25 @@ void CPPageInterface::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar)
 		UpdateData();
 		s.nThemeBlue		= m_nThemeBlue;
 		OnThemeChange();
+	}
+
+	// Re-tint the open Options sheet to match the new colours when the drag ends (SB_ENDSCROLL).
+	// It is done on release, not on every tick: continuously repainting the sheet's standard
+	// controls flickers (they are not owner-drawn / double-buffered like the player's). The player
+	// follows live via OnThemeChange above.
+	const bool bThemeSlider = (*pScrollBar == m_ThemeBrightnessCtrl || *pScrollBar == m_ThemeRedCtrl
+		|| *pScrollBar == m_ThemeGreenCtrl || *pScrollBar == m_ThemeBlueCtrl);
+	if (bThemeSlider && nSBCode == SB_ENDSCROLL && DarkTheme::IsActive()) {
+		DarkTheme::CommitThemeColors(); // snapshot the final colour so all four sliders move together
+		if (HWND hSheet = ::GetAncestor(GetSafeHwnd(), GA_ROOT)) {
+			TreePropSheet::CPropPageFrameDefault::s_clrFace = DarkTheme::FaceColor();
+			DarkTheme::RefreshColors(hSheet);
+		}
+		// Repaint the four sliders so they all move to the final (committed) colour on release.
+		m_ThemeBrightnessCtrl.Invalidate();
+		m_ThemeRedCtrl.Invalidate();
+		m_ThemeGreenCtrl.Invalidate();
+		m_ThemeBlueCtrl.Invalidate();
 	}
 
 	SetModified();

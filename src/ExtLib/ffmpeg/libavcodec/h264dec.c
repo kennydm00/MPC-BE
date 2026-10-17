@@ -42,6 +42,7 @@
 #include "internal.h"
 #include "error_resilience.h"
 #include "avcodec.h"
+#include "decode.h"
 #include "h264.h"
 #include "h264dec.h"
 #include "h2645_parse.h"
@@ -379,6 +380,24 @@ static av_cold int h264_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
+// ==> Start patch MPC
+enum AVPixelFormat ff_h264_get_pixel_format(H264Context *h, const SPS *sps);
+
+const SPS* h264_getSPS(const void *data)
+{
+    const H264Context* h = (H264Context*)data;
+    const SPS *sps = h->ps.sps;
+    if (!sps) {
+        int i;
+        for (i = 0; i < MAX_SPS_COUNT && !sps; i++)
+            if (h->ps.sps_list[i])
+                sps = h->ps.sps_list[i];
+    }
+
+    return sps;
+}
+// ==> End patch MPC
+
 static AVOnce h264_vlc_init = AV_ONCE_INIT;
 
 static av_cold int h264_decode_init(AVCodecContext *avctx)
@@ -445,21 +464,6 @@ static av_cold int h264_decode_init(AVCodecContext *avctx)
 
     return 0;
 }
-
-// ==> Start patch MPC
-const SPS* h264_getSPS(const H264Context *h)
-{
-    const SPS *sps = h->ps.sps;
-    if (!sps) {
-        int i;
-        for (i = 0; i < MAX_SPS_COUNT && !sps; i++)
-            if (h->ps.sps_list[i])
-                sps = h->ps.sps_list[i];
-    }
-
-    return sps;
-}
-// ==> End patch MPC
 
 /**
  * instantaneous decoder refresh.
@@ -631,6 +635,39 @@ static int h264_attach_partitions(const H264Context *h, H264SliceContext *sl,
     return idx;
 }
 
+static int h264_decode_sei(H264Context *h, H2645NAL *nal)
+{
+    AVCodecContext *const avctx = h->avctx;
+    int ret;
+
+    ret = ff_h264_sei_decode(&h->sei, &nal->gb, &h->ps, avctx);
+    h->has_recovery_point = h->has_recovery_point || h->sei.recovery_point.recovery_frame_cnt != -1;
+    if (avctx->debug & FF_DEBUG_GREEN_MD)
+        debug_green_metadata(&h->sei.green_metadata, avctx);
+    if (ret < 0 && (avctx->err_recognition & AV_EF_EXPLODE))
+        return ret;
+
+    return 0;
+}
+
+/* Decode the SEI NAL units following the slice at idx. */
+static int h264_decode_late_sei(H264Context *h, int idx)
+{
+    for (int i = idx + 1; i < h->pkt.nb_nals; i++) {
+        H2645NAL *nal = &h->pkt.nals[i];
+        int ret;
+
+        if (nal->type != H264_NAL_SEI)
+            continue;
+
+        ret = h264_decode_sei(h, nal);
+        if (ret < 0)
+            return ret;
+    }
+
+    return 0;
+}
+
 static int decode_nal_units(H264Context *h, AVBufferRef *buf_ref,
                             const uint8_t *buf, int buf_size)
 {
@@ -735,6 +772,9 @@ static int decode_nal_units(H264Context *h, AVBufferRef *buf_ref,
             if (h->current_slice == 1) {
                 if (avctx->active_thread_type & FF_THREAD_FRAME &&
                     i >= nals_needed && !h->setup_finished && h->cur_pic_ptr) {
+                    ret = h264_decode_late_sei(h, i);
+                    if (ret < 0)
+                        goto end;
                     ff_thread_finish_setup(avctx);
                     h->setup_finished = 1;
                 }
@@ -765,15 +805,11 @@ static int decode_nal_units(H264Context *h, AVBufferRef *buf_ref,
                        nal->type == H264_NAL_DPB ? 'B' : 'C');
             break;
         case H264_NAL_SEI:
-            if (h->setup_finished) {
-                avpriv_request_sample(avctx, "Late SEI");
+            /* already decoded by h264_decode_late_sei() */
+            if (h->setup_finished)
                 break;
-            }
-            ret = ff_h264_sei_decode(&h->sei, &nal->gb, &h->ps, avctx);
-            h->has_recovery_point = h->has_recovery_point || h->sei.recovery_point.recovery_frame_cnt != -1;
-            if (avctx->debug & FF_DEBUG_GREEN_MD)
-                debug_green_metadata(&h->sei.green_metadata, h->avctx);
-            if (ret < 0 && (h->avctx->err_recognition & AV_EF_EXPLODE))
+            ret = h264_decode_sei(h, nal);
+            if (ret < 0)
                 goto end;
             break;
         case H264_NAL_SPS: {
@@ -860,7 +896,7 @@ end:
      * causes problems for the first MB line, too.
      */
     if (!FIELD_PICTURE(h) && h->current_slice && h->enable_er &&
-        !ff_h264_skip_all_pixels(h->avctx)) {
+        !ff_decode_skip_all_pixels(h->avctx)) {
 
         H264SliceContext *sl = h->slice_ctx;
         int use_last_pic = h->last_pic_for_ec.f->buf[0] && !sl->ref_count[0];
@@ -1015,7 +1051,7 @@ static int finalize_frame(H264Context *h, AVFrame *dst, H264Picture *out, int *g
         )
             return 0;
 
-        if (!h->avctx->hwaccel && !ff_h264_skip_all_pixels(h->avctx) &&
+        if (!h->avctx->hwaccel && !ff_decode_skip_all_pixels(h->avctx) &&
             (out->field_poc[0] == INT_MAX ||
              out->field_poc[1] == INT_MAX)
            ) {
@@ -1029,8 +1065,8 @@ static int finalize_frame(H264Context *h, AVFrame *dst, H264Picture *out, int *g
             av_log(h->avctx, AV_LOG_DEBUG, "Duplicating field %d to fill missing\n", field);
 
             for (p = 0; p<4; p++) {
-                dst_data[p] = f->data[p] + (field^1)*f->linesize[p];
-                src_data[p] = f->data[p] +  field   *f->linesize[p];
+                dst_data[p] = FF_PTR_ADD(f->data[p], (field^1)*f->linesize[p]);
+                src_data[p] = FF_PTR_ADD(f->data[p],  field   *f->linesize[p]);
                 linesizes[p] = 2*f->linesize[p];
             }
 

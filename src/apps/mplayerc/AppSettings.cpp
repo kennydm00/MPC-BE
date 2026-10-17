@@ -673,8 +673,8 @@ void CAppSettings::ResetSettings()
 	nThemeGreen = 255;
 	nThemeBlue  = 255;
 	bDarkMenu = true;
-	bDarkMenuBlurBehind = false;
 	bDarkTitle = true;
+	bDarkDialogs = false;
 
 	ShowOSD.Enable = 1;
 	bOSDRemainingTime = false;
@@ -856,6 +856,11 @@ void CAppSettings::LoadSettings(bool bForce/* = false*/)
 	if (iLanguage < 0) {
 		iLanguage = CMPlayerCApp::GetDefLanguage();
 	}
+	// Read the dark-theme flag before SetLanguage: SetLanguage may pop the "language pack will not
+	// work with this version" message box, and DarkTheme::IsActive() must already reflect the user's
+	// saved preference for that box to be themed (bUseDarkTheme is otherwise not read until further
+	// below, so at this point it would still hold the ResetSettings default). Harmless duplicate read.
+	profile.ReadBool(IDS_R_THEME, IDS_RS_USEDARKTHEME, bUseDarkTheme);
 	CMPlayerCApp::SetLanguage(iLanguage, false);
 
 	FiltersPriority.LoadSettings();
@@ -1294,8 +1299,8 @@ void CAppSettings::LoadSettings(bool bForce/* = false*/)
 	profile.ReadHex32(IDS_R_THEME, IDS_RS_TOOLBARCOLORFACE, *(unsigned*)&clrFaceABGR);
 	profile.ReadHex32(IDS_R_THEME, IDS_RS_TOOLBARCOLOROUTLINE, *(unsigned*)&clrOutlineABGR);
 	profile.ReadBool(IDS_R_THEME, IDS_RS_DARKMENU, bDarkMenu);
-	//profile.ReadBool(IDS_R_THEME, IDS_RS_DARKMENU_BLURBEHIND, bDarkMenuBlurBehind);
 	profile.ReadBool(IDS_R_THEME, IDS_RS_DARKTITLE, bDarkTitle);
+	profile.ReadBool(IDS_R_THEME, IDS_RS_DARKDIALOGS, bDarkDialogs);
 
 	// FullScreen
 	profile.ReadBool(IDS_R_SETTINGS, IDS_RS_LAUNCHFULLSCREEN, fLaunchfullscreen);
@@ -1919,8 +1924,8 @@ void CAppSettings::SaveSettings()
 	profile.WriteHex32(IDS_R_THEME, IDS_RS_TOOLBARCOLORFACE, clrFaceABGR);
 	profile.WriteHex32(IDS_R_THEME, IDS_RS_TOOLBARCOLOROUTLINE, clrOutlineABGR);
 	profile.WriteBool(IDS_R_THEME, IDS_RS_DARKMENU, bDarkMenu);
-	//profile.WriteBool(IDS_R_THEME, IDS_RS_DARKMENU_BLURBEHIND, bDarkMenuBlurBehind);
 	profile.WriteBool(IDS_R_THEME, IDS_RS_DARKTITLE, bDarkTitle);
+	profile.WriteBool(IDS_R_THEME, IDS_RS_DARKDIALOGS, bDarkDialogs);
 
 	// FullScreen
 	profile.WriteBool(IDS_R_SETTINGS, IDS_RS_LAUNCHFULLSCREEN, fLaunchfullscreen);

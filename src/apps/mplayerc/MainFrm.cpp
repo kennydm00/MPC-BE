@@ -73,6 +73,8 @@
 #include <filters/renderer/VideoRenderers/IPinHook.h>
 #include "filters/ffmpeg_link_fix.h"
 #include "ComPropertySheet.h"
+#include "controls/DarkTheme.h"
+#include "controls/DarkTabCtrl.h"
 #include <comdef.h>
 #include <dwmapi.h>
 
@@ -819,8 +821,18 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	// Hide all dockable bars by default
 	for (const auto& pDockingBar : m_dockingbars) {
+		// Draw the bar frame / gripper / floating-frame border dark, like the playlist bar. Without
+		// this the Shader Editor, Capture, Navigation and Subresync bars render their sizing frame
+		// with light system colours (a bright "white frame", docked or floating).
+		// The playlist bar was dark before this work and stays keyed to the dark theme alone; the bars
+		// darkened here (Capture, Shader editor, Navigation, Subresync) follow the dialogs flag.
+		pDockingBar->m_bUseDarkTheme = (pDockingBar == &m_wndPlaylistBar) ? s.bUseDarkTheme : DarkTheme::IsActive();
 		pDockingBar->ShowWindow(SW_HIDE);
 	}
+
+	// Dark-theme every standard message box shown on the UI thread (Reset/Export settings, error
+	// prompts, ...) without wrapping each call site. Follows the theme toggle; no-op when it's off.
+	DarkTheme::InstallMessageBoxHook();
 
 	m_fileDropTarget.Register(this);
 
@@ -1858,6 +1870,36 @@ void CMainFrame::DestroyOSDBar()
 	}
 }
 
+void CMainFrame::ClipRectToMonitor(LPRECT prc)
+{
+	WINDOWPLACEMENT wp;
+	wp.length = sizeof(wp);
+	GetWindowPlacement(&wp);
+
+	int w = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+	int h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
+
+	MONITORINFO mi = { sizeof(mi) };
+	GetMonitorInfoW(MonitorFromRect(prc, MONITOR_DEFAULTTONEAREST), &mi);
+
+	POINT cur_pos;
+	GetCursorPos(&cur_pos);
+
+	// by cursor position
+	// prc->left   = max(rcWork.left, min(rcWork.right-w, cur_pos.x - (double)((rnp.right-rnp.left)/((double)(rcWork.right-rcWork.left)/cur_pos.x))));
+	// prc->top    = max(rcWork.top,  min(rcWork.bottom-h, cur_pos.y - (double)((rnp.bottom-rnp.top)/((double)(rcWork.bottom-rcWork.top)/cur_pos.y))));
+
+	prc->left   = std::max(mi.rcWork.left, std::min(mi.rcWork.right-w, cur_pos.x - (w/2)));
+	prc->top    = std::max(mi.rcWork.top,  std::min(mi.rcWork.bottom-h, cur_pos.y - (h/2)));
+	prc->right  = prc->left + w;
+	prc->bottom = prc->top  + h;
+
+	rc_forceNP.left		= prc->left;
+	rc_forceNP.right	= prc->right;
+	rc_forceNP.top		= prc->top;
+	rc_forceNP.bottom	= prc->bottom;
+}
+
 void CMainFrame::OnEnterSizeMove()
 {
 	m_bWndZoomed = false;
@@ -1869,92 +1911,18 @@ void CMainFrame::OnEnterSizeMove()
 
 	MONITORINFO mi = { sizeof(mi) };
 	GetMonitorInfoW(MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST), &mi);
-	RECT rcWork = mi.rcWork;
 
 	if (IsZoomed() // window is maximized
-		|| (rcWindow.top == rcWork.top && rcWindow.bottom == rcWork.bottom) // window is aero snapped (???)
+		|| (rcWindow.top == mi.rcWork.top && rcWindow.bottom == mi.rcWork.bottom) // window is aero snapped (???)
 		|| m_bFullScreen) { // window is fullscreen
 
 		m_bWndZoomed = true;
 	}
 
 	if (!m_bWndZoomed) {
-		WINDOWPLACEMENT wp;
-		GetWindowPlacement(&wp);
-		RECT rcNormalPosition = wp.rcNormalPosition;
-		snap_x = cur_pos.x - rcNormalPosition.left;
-		snap_y = cur_pos.y - rcNormalPosition.top;
+		snap_x = cur_pos.x - rcWindow.left;
+		snap_y = cur_pos.y - rcWindow.top;
 	}
-}
-
-BOOL CMainFrame::isSnapClose(int a, int b)
-{
-	snap_Margin = GetSystemMetrics(SM_CYCAPTION);
-	return (abs(a - b) < snap_Margin);
-}
-
-void CMainFrame::OnMove(int x, int y)
-{
-	__super::OnMove(x, y);
-
-	//MoveVideoWindow(); // This isn't needed, based on my limited tests. If it is needed then please add a description the scenario(s) where it is needed.
-	m_wndView.Invalidate();
-
-	WINDOWPLACEMENT wp;
-	GetWindowPlacement(&wp);
-	if (!m_bFirstFSAfterLaunchOnFullScreen && !m_bFullScreen
-			&& IsWindowVisible() && wp.flags != WPF_RESTORETOMAXIMIZED && wp.showCmd != SW_SHOWMINIMIZED) {
-
-		CAppSettings& s = AfxGetAppSettings();
-		CRect rect;
-		GetWindowRect(&rect);
-
-		s.ptLastWindowPos = rect.TopLeft();
-
-		if (m_bAudioOnly && IsSomethingLoaded() && s.nAudioWindowMode == 2) {
-			s.szLastWindowSize.cx = rect.Width();
-		} else {
-			s.szLastWindowSize = rect.Size();
-		}
-	}
-
-	if (m_wndToolBar && ::IsWindow(m_wndToolBar.GetSafeHwnd())) {
-		m_wndToolBar.Invalidate();
-	}
-
-	FlyBarSetPos();
-	OSDBarSetPos();
-}
-
-void CMainFrame::ClipRectToMonitor(LPRECT prc)
-{
-	WINDOWPLACEMENT wp;
-	GetWindowPlacement(&wp);
-	RECT rcNormalPosition = wp.rcNormalPosition;
-
-	int w = rcNormalPosition.right - rcNormalPosition.left;
-	int h = rcNormalPosition.bottom - rcNormalPosition.top;
-
-	MONITORINFO mi = { sizeof(mi) };
-	GetMonitorInfoW(MonitorFromRect(prc, MONITOR_DEFAULTTONEAREST), &mi);
-	RECT rcWork = mi.rcWork;
-
-	POINT cur_pos;
-	GetCursorPos(&cur_pos);
-
-	// by cursor position
-	// prc->left   = max(rcWork.left, min(rcWork.right-w, cur_pos.x - (double)((rnp.right-rnp.left)/((double)(rcWork.right-rcWork.left)/cur_pos.x))));
-	// prc->top    = max(rcWork.top,  min(rcWork.bottom-h, cur_pos.y - (double)((rnp.bottom-rnp.top)/((double)(rcWork.bottom-rcWork.top)/cur_pos.y))));
-
-	prc->left   = std::max(rcWork.left, std::min(rcWork.right-w, cur_pos.x - (w/2)));
-	prc->top    = std::max(rcWork.top,  std::min(rcWork.bottom-h, cur_pos.y - (h/2)));
-	prc->right  = prc->left + w;
-	prc->bottom = prc->top  + h;
-
-	rc_forceNP.left		= prc->left;
-	rc_forceNP.right	= prc->right;
-	rc_forceNP.top		= prc->top;
-	rc_forceNP.bottom	= prc->bottom;
 }
 
 void CMainFrame::OnMoving(UINT fwSide, LPRECT pRect)
@@ -1984,9 +1952,11 @@ void CMainFrame::OnMoving(UINT fwSide, LPRECT pRect)
 			rcWork.InflateRect(GetInvisibleBorderSize());
 		}
 
-		RECT rcMonitor = mi.rcMonitor;
-
 		OffsetRect(pRect, cur_pos.x - (pRect->left + snap_x), cur_pos.y - (pRect->top + snap_y));
+
+		const int snap_Margin = GetSystemMetrics(SM_CYCAPTION);
+
+		auto isSnapClose = [&snap_Margin](int a, int b) { return (abs(a - b) < snap_Margin); };
 
 		if (isSnapClose(pRect->left, rcWork.left)) { // left screen snap
 			OffsetRect(pRect, rcWork.left - pRect->left, 0);
@@ -2002,15 +1972,98 @@ void CMainFrame::OnMoving(UINT fwSide, LPRECT pRect)
 		} else if (isSnapClose(rcWork.bottom, pRect->bottom)) { // bottom taskbar snap
 			OffsetRect(pRect, 0, rcWork.bottom - pRect->bottom);
 			m_bWasSnapped = true;
-		} else if (isSnapClose(pRect->bottom, rcMonitor.bottom)) { // bottom screen snap
-			OffsetRect(pRect, 0, rcMonitor.bottom - pRect->bottom);
-			m_bWasSnapped = true;
 		}
 
+	}
+}
+
+void CMainFrame::OnMove(int x, int y)
+{
+	__super::OnMove(x, y);
+
+	//MoveVideoWindow(); // This isn't needed, based on my limited tests. If it is needed then please add a description the scenario(s) where it is needed.
+	m_wndView.Invalidate();
+
+	WINDOWPLACEMENT wp;
+	wp.length = sizeof(wp);
+	GetWindowPlacement(&wp);
+
+	if (!m_bFirstFSAfterLaunchOnFullScreen && !m_bFullScreen
+			&& IsWindowVisible() && wp.flags != WPF_RESTORETOMAXIMIZED && wp.showCmd != SW_SHOWMINIMIZED) {
+
+		CAppSettings& s = AfxGetAppSettings();
+		CRect rect;
+		GetWindowRect(&rect);
+
+		s.ptLastWindowPos = rect.TopLeft();
+
+		if (m_bAudioOnly && IsSomethingLoaded() && s.nAudioWindowMode == 2) {
+			s.szLastWindowSize.cx = rect.Width();
+		} else {
+			s.szLastWindowSize = rect.Size();
+		}
+	}
+
+	if (m_wndToolBar && ::IsWindow(m_wndToolBar.GetSafeHwnd())) {
+		m_wndToolBar.Invalidate();
 	}
 
 	FlyBarSetPos();
 	OSDBarSetPos();
+}
+
+void CMainFrame::OnSizing(UINT nSide, LPRECT pRect)
+{
+	__super::OnSizing(nSide, pRect);
+
+	const CAppSettings& s = AfxGetAppSettings();
+	const bool bCtrl = !!(GetAsyncKeyState(VK_CONTROL) & 0x80000000);
+
+	if (m_eMediaLoadState != MLS_LOADED || m_bFullScreen
+			|| m_iVideoSize == DVS_STRETCH
+			|| (bCtrl == s.bLimitWindowProportions)) {
+		return;
+	}
+
+	const CSize videoSize = GetVideoSize();
+	if (!videoSize.cx || !videoSize.cy) {
+		return;
+	}
+
+	CSize decorationsSize;
+	CRect decorationsRect;
+	CalcControlsSize(decorationsSize);
+	VERIFY(AdjustWindowRectEx(decorationsRect, GetWindowStyle(m_hWnd), IsMainMenuVisible(), GetWindowExStyle(m_hWnd)));
+	decorationsSize += decorationsRect.Size();
+
+	const CSize videoAreaSize(pRect->right - pRect->left - decorationsSize.cx, pRect->bottom - pRect->top - decorationsSize.cy);
+	const bool bWider = videoAreaSize.cy < videoAreaSize.cx;
+
+	// new proportional width and height of the window. only one of these values is used.
+	long w = MulDiv(videoAreaSize.cy, videoSize.cx, videoSize.cy) + decorationsSize.cx;
+	long h = MulDiv(videoAreaSize.cx, videoSize.cy, videoSize.cx) + decorationsSize.cy;
+
+	if (nSide == WMSZ_TOP || nSide == WMSZ_BOTTOM || (!bWider && (nSide == WMSZ_TOPRIGHT || nSide == WMSZ_BOTTOMRIGHT))) {
+		pRect->right = pRect->left + w;
+	}
+	else if (nSide == WMSZ_LEFT || nSide == WMSZ_RIGHT || (bWider && (nSide == WMSZ_BOTTOMLEFT || nSide == WMSZ_BOTTOMRIGHT))) {
+		pRect->bottom = pRect->top + h;
+	}
+	else if (!bWider && (nSide == WMSZ_TOPLEFT || nSide == WMSZ_BOTTOMLEFT)) {
+		pRect->left = pRect->right - w;
+	}
+	else if (bWider && (nSide == WMSZ_TOPLEFT || nSide == WMSZ_TOPRIGHT)) {
+		pRect->top = pRect->bottom - h;
+	}
+
+	FlyBarSetPos();
+	OSDBarSetPos();
+
+#if _DEBUG
+	CString msg;
+	msg.Format(L"W x H = %d x %d", pRect->right - pRect->left - decorationsSize.cx, pRect->bottom - pRect->top - decorationsSize.cy);
+	SetStatusMessage(msg);
+#endif
 }
 
 void CMainFrame::OnSize(UINT nType, int cx, int cy)
@@ -2078,60 +2131,6 @@ void CMainFrame::OnSize(UINT nType, int cx, int cy)
 	}
 }
 
-void CMainFrame::OnSizing(UINT nSide, LPRECT pRect)
-{
-	__super::OnSizing(nSide, pRect);
-
-	const CAppSettings& s = AfxGetAppSettings();
-	const bool bCtrl = !!(GetAsyncKeyState(VK_CONTROL) & 0x80000000);
-
-	if (m_eMediaLoadState != MLS_LOADED || m_bFullScreen
-			|| m_iVideoSize == DVS_STRETCH
-			|| (bCtrl == s.bLimitWindowProportions)) {
-		return;
-	}
-
-	const CSize videoSize = GetVideoSize();
-	if (!videoSize.cx || !videoSize.cy) {
-		return;
-	}
-
-	CSize decorationsSize;
-	CRect decorationsRect;
-	CalcControlsSize(decorationsSize);
-	VERIFY(AdjustWindowRectEx(decorationsRect, GetWindowStyle(m_hWnd), IsMainMenuVisible(), GetWindowExStyle(m_hWnd)));
-	decorationsSize += decorationsRect.Size();
-
-	const CSize videoAreaSize(pRect->right - pRect->left - decorationsSize.cx, pRect->bottom - pRect->top - decorationsSize.cy);
-	const bool bWider = videoAreaSize.cy < videoAreaSize.cx;
-
-	// new proportional width and height of the window. only one of these values is used.
-	long w = MulDiv(videoAreaSize.cy, videoSize.cx, videoSize.cy) + decorationsSize.cx;
-	long h = MulDiv(videoAreaSize.cx, videoSize.cy, videoSize.cx) + decorationsSize.cy;
-
-	if (nSide == WMSZ_TOP || nSide == WMSZ_BOTTOM || (!bWider && (nSide == WMSZ_TOPRIGHT || nSide == WMSZ_BOTTOMRIGHT))) {
-		pRect->right = pRect->left + w;
-	}
-	else if (nSide == WMSZ_LEFT || nSide == WMSZ_RIGHT || (bWider && (nSide == WMSZ_BOTTOMLEFT || nSide == WMSZ_BOTTOMRIGHT))) {
-		pRect->bottom = pRect->top + h;
-	}
-	else if (!bWider && (nSide == WMSZ_TOPLEFT || nSide == WMSZ_BOTTOMLEFT)) {
-		pRect->left = pRect->right - w;
-	}
-	else if (bWider && (nSide == WMSZ_TOPLEFT || nSide == WMSZ_TOPRIGHT)) {
-		pRect->top = pRect->bottom - h;
-	}
-
-	FlyBarSetPos();
-	OSDBarSetPos();
-
-#if _DEBUG
-	CString msg;
-	msg.Format(L"W x H = %d x %d", pRect->right - pRect->left - decorationsSize.cx, pRect->bottom - pRect->top - decorationsSize.cy);
-	SetStatusMessage(msg);
-#endif
-}
-
 void CMainFrame::OnDisplayChange() // untested, not sure if it's working...
 {
 	DLog(L"CMainFrame::OnDisplayChange() : start");
@@ -2149,15 +2148,15 @@ void CMainFrame::OnDisplayChange() // untested, not sure if it's working...
 	if (m_bFullScreen || IsD3DFullScreenMode()) {
 		CWnd* cwnd = m_bFullScreen ? this : static_cast<CWnd*>(m_pFullscreenWnd);
 
-		MONITORINFO MonitorInfo = { sizeof(MonitorInfo) };
 		HMONITOR hMonitor = MonitorFromWindow(cwnd->m_hWnd, MONITOR_DEFAULTTONULL);
-		if (GetMonitorInfoW(hMonitor, &MonitorInfo)) {
-			CRect MonitorRect = CRect(MonitorInfo.rcMonitor);
+		MONITORINFO mi;
+		mi.cbSize = sizeof(mi);
+		if (GetMonitorInfoW(hMonitor, &mi)) {
 			cwnd->SetWindowPos(nullptr,
-							   MonitorRect.left,
-							   MonitorRect.top,
-							   MonitorRect.Width(),
-							   MonitorRect.Height(),
+							   mi.rcMonitor.left,
+							   mi.rcMonitor.top,
+							   mi.rcMonitor.right - mi.rcMonitor.left,
+							   mi.rcMonitor.bottom - mi.rcMonitor.top,
 							   SWP_NOZORDER);
 			MoveVideoWindow();
 		}
@@ -2170,13 +2169,14 @@ void CMainFrame::OnWindowPosChanging(WINDOWPOS* lpwndpos)
 {
 	if (m_bFullScreen && !(lpwndpos->flags & SWP_NOMOVE)) {
 		const HMONITOR hm = MonitorFromPoint(CPoint(lpwndpos->x, lpwndpos->y), MONITOR_DEFAULTTONULL);
-		MONITORINFO mi = { sizeof(mi) };
+		MONITORINFO mi;
+		mi.cbSize = sizeof(mi);
 		if (GetMonitorInfoW(hm, &mi)) {
-			lpwndpos->flags &= ~SWP_NOSIZE;
+			lpwndpos->x  = mi.rcMonitor.left;
+			lpwndpos->y  = mi.rcMonitor.top;
 			lpwndpos->cx = mi.rcMonitor.right - mi.rcMonitor.left;
 			lpwndpos->cy = mi.rcMonitor.bottom - mi.rcMonitor.top;
-			lpwndpos->x = mi.rcMonitor.left;
-			lpwndpos->y = mi.rcMonitor.top;
+			lpwndpos->flags &= ~SWP_NOSIZE;
 		}
 	}
 
@@ -3040,8 +3040,6 @@ void CMainFrame::OnTimer(UINT_PTR nIDEvent)
 		break;
 		case TIMER_DM_AUTOCHANGING: {
 			KillTimer(TIMER_DM_AUTOCHANGING);
-
-			ASSERT(GetMediaState() != State_Stopped);
 			OnPlayPlay();
 		}
 		break;
@@ -3795,7 +3793,27 @@ bool CMainFrame::CancelLeftLongPressSpeed(bool bRestoreRate)
 	m_bLeftLongPressSpeedActive = false;
 
 	if (bWasActive && bRestoreRate) {
-		SetPlayingRate(m_leftLongPressSpeedPreviousRate);
+		HRESULT hr = E_FAIL;
+		if (GetPlaybackMode() == PM_FILE) {
+			if (m_pMS) {
+				hr = m_pMS->SetRate(m_leftLongPressSpeedPreviousRate);
+			}
+		} else if (GetPlaybackMode() == PM_DVD) {
+			if (m_pDVDC) {
+				if (m_leftLongPressSpeedPreviousRate > 0) {
+					hr = m_pDVDC->PlayForwards(m_leftLongPressSpeedPreviousRate, DVD_CMD_FLAG_Block, nullptr);
+				} else {
+					hr = m_pDVDC->PlayBackwards(-m_leftLongPressSpeedPreviousRate, DVD_CMD_FLAG_Block, nullptr);
+				}
+			}
+		}
+
+		if (SUCCEEDED(hr)) {
+			m_PlaybackRate = m_leftLongPressSpeedPreviousRate;
+			CString strODSMessage;
+			strODSMessage.Format(ResStr(IDS_OSD_SPEED), Rate2String(m_PlaybackRate));
+			m_OSD.DisplayMessage(OSD_TOPRIGHT, strODSMessage);
+		}
 	}
 
 	return bWasActive;
@@ -4041,7 +4059,9 @@ void CMainFrame::OnMouseMove(UINT nFlags, CPoint point)
 
 		if (s.iCaptionMenuMode == MODE_BORDERLESS) {
 			WINDOWPLACEMENT wp;
+			wp.length = sizeof(wp);
 			GetWindowPlacement(&wp);
+
 			if (wp.showCmd == SW_SHOWMAXIMIZED) {
 				SendMessageW(WM_SYSCOMMAND, SC_RESTORE, -1);
 				RECT r;
@@ -9143,7 +9163,7 @@ void CMainFrame::OnMenuSubtitlesStyle()
 		CString caption = ResStr(IDS_SUBTITLES_STYLES);
 		caption.Replace(L"&", nullptr);
 
-		CPropertySheet dlg(caption, GetModalParent());
+		CDarkPropertySheet dlg(caption, GetModalParent());
 		for (size_t i = 0; i < pages.size(); i++) {
 			dlg.AddPage(pages[i].get());
 		}
@@ -18632,6 +18652,8 @@ afx_msg void CMainFrame::OnLanguage(UINT nID)
 		SetColorMenu();
 	}
 
+	m_wndStatusBar.SetMenu();
+
 	// Re-create Win 7 TaskBar preview button for change button hint
 	CreateThumbnailToolbar();
 
@@ -19625,7 +19647,9 @@ LRESULT CMainFrame::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 
 			case IDTB_BUTTON5:
 				WINDOWPLACEMENT wp;
+				wp.length = sizeof(wp);
 				GetWindowPlacement(&wp);
+
 				if (wp.showCmd == SW_SHOWMINIMIZED) {
 					SendMessageW(WM_SYSCOMMAND, SC_RESTORE, -1);
 				}

@@ -227,8 +227,8 @@
 #define IDS_RS_TOOLBARCOLORFACE				L"ToolbarColorFace"
 #define IDS_RS_TOOLBARCOLOROUTLINE			L"ToolbarColorOutline"
 #define IDS_RS_DARKMENU						L"DarkMenu"
-#define IDS_RS_DARKMENU_BLURBEHIND			L"DarkMenuBlurBehind"
 #define IDS_RS_DARKTITLE					L"DarkTitle"
+#define IDS_RS_DARKDIALOGS					L"DarkDialogs"
 
 // FullScreen
 #define IDS_RS_LAUNCHFULLSCREEN				L"LaunchFullScreen"

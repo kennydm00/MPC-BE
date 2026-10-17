@@ -313,32 +313,34 @@ void CMixer::UpdateOutput(SampleFormat out_sf, uint32_t out_layout, int out_samp
 
 int CMixer::Mixing(BYTE* pOutput, int out_samples, const BYTE* pInput, const int in_samples)
 {
-	return Mixing(pOutput, out_samples, &pInput, in_samples);
-}
+	// do not check 'm_in_avsf' and 'm_out_avsf' here
 
-int CMixer::Mixing(BYTE* pOutput, int out_samples, const BYTE** ppInput, const int in_samples)
-{
-	if (!m_ActualContext && !Init()) {
-		DLog(L"CMixer::Mixing() : Init failed");
-		return 0;
-	}
+	const BYTE* pInputs[64/*SWR_CH_MAX*/] = {};
 
-	static const BYTE* buffers[64/*SWR_CH_MAX*/] = {};
-
-	if (m_in_sf == SAMPLE_FMT_S24) {
-		ASSERT(m_in_avsf == AV_SAMPLE_FMT_S32);
-		size_t allsamples = in_samples * m_in_channels;
-		m_Buffer1.ExtendSize(allsamples);
-		convert_int24_to_int32(m_Buffer1.Data(), ppInput[0], allsamples);
-		buffers[0] = (BYTE*)m_Buffer1.Data();
-	}
-	else if (av_sample_fmt_is_planar(m_in_avsf)) {
+	if (sample_fmt_is_planar(m_in_sf)) {
+		const int in_plane_size = in_samples * get_bytes_per_sample(m_in_sf);
 		for (int i = 0; i < m_in_channels; i++) {
-			buffers[i] = ppInput[i];
+			pInputs[i] = pInput + i * in_plane_size;
 		}
 	}
+	else if (m_in_sf == SAMPLE_FMT_S24) {
+		size_t allsamples = in_samples * m_in_channels;
+		m_Buffer1.ExtendSize(allsamples);
+		convert_int24_to_int32(m_Buffer1.Data(), pInput, allsamples);
+		pInputs[0] = (BYTE*)m_Buffer1.Data();
+	}
 	else {
-		buffers[0] = ppInput[0];
+		pInputs[0] = pInput;
+	}
+
+	return Mixing2(pOutput, out_samples, pInputs, in_samples);
+}
+
+int CMixer::Mixing2(BYTE* pOutput, int out_samples, const BYTE** const ppInputs, const int in_samples)
+{
+	if (!m_ActualContext && !Init()) {
+		DLog(L"CMixer::Mixing2() : Init failed");
+		return 0;
 	}
 
 	BYTE* output;
@@ -350,9 +352,9 @@ int CMixer::Mixing(BYTE* pOutput, int out_samples, const BYTE** ppInput, const i
 		output = pOutput;
 	}
 
-	out_samples = swr_convert(m_pSWRCxt, &output, out_samples, buffers, in_samples);
+	out_samples = swr_convert(m_pSWRCxt, &output, out_samples, ppInputs, in_samples);
 	if (out_samples < 0) {
-		DLog(L"CMixer::Mixing() : swr_convert failed");
+		DLog(L"CMixer::Mixing2() : swr_convert failed");
 		out_samples = 0;
 	}
 

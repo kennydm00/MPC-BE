@@ -157,11 +157,13 @@ private:
 
 	CMediaType								m_pCurrentMediaType;
 	DXVA2_ExtendedFormat					m_inputDxvaExtFormat = {};
+	DWORD									m_outputFourcc = 0;
+	int										m_outputWidth  = 0;
 
 	BOOL									m_bDecodingStart = FALSE;
 	BOOL									m_bDecoderAcceptFormat = FALSE;
 
-	bool									m_bHighBitdepth = false;
+	AVPixelFormat							m_swPixFormat;
 
 	std::unique_ptr<CMSDKDecoder>			m_pMSDKDecoder;
 	int										m_iMvcOutputMode = MVC_OUTPUT_Auto;
@@ -236,12 +238,13 @@ private:
 
 	AVPixelFormat	m_dxva_pix_fmt;
 
-	HRESULT						CheckDXVA2Decoder(AVCodecContext *c);
+	HRESULT			CheckDXVA2Decoder(AVCodecContext *c);
 
-	static int					av_get_buffer(struct AVCodecContext *c, AVFrame *pic, int flags);
-	static enum AVPixelFormat	av_get_format(struct AVCodecContext *c, const enum AVPixelFormat* pix_fmts);
+	static int		av_get_buffer(struct AVCodecContext *c, AVFrame *pic, int flags);
+	static AVPixelFormat av_get_format(struct AVCodecContext *c, const enum AVPixelFormat* pix_fmts);
 
-	bool						CheckDXVACompatible(const enum AVCodecID codec, const enum AVPixelFormat pix_fmt, const int profile);
+	bool			CheckDXVACompatible(const enum AVCodecID codec, const enum AVPixelFormat pix_fmt, const int profile);
+	bool			DirectCopyPossible(const AVPixelFormat avformat) const;
 
 public:
 	CMPCVideoDecFilter(LPUNKNOWN lpunk, HRESULT* phr);
@@ -357,6 +360,8 @@ public:
 
 	// === Codec functions
 	HRESULT						SetFFMpegCodec(int nCodec, bool bEnabled);
+
+	static AVPixelFormat NonJPixelFmt(AVPixelFormat format);
 
 private:
 	friend class CVideoDecDXVAAllocator;

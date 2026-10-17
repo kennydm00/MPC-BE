@@ -356,6 +356,8 @@ static int discard_samples(AVCodecContext *avctx, AVFrame *frame, int64_t *disca
 
     if ((frame->flags & AV_FRAME_FLAG_DISCARD)) {
         avci->skip_samples = FFMAX(0, avci->skip_samples - frame->nb_samples);
+        av_log(avctx, AV_LOG_DEBUG, "discard whole frame due to discard frame flag, skip left: %d\n",
+               avci->skip_samples);
         *discarded_samples += frame->nb_samples;
         return AVERROR(EAGAIN);
     }
@@ -399,6 +401,7 @@ static int discard_samples(AVCodecContext *avctx, AVFrame *frame, int64_t *disca
 
     if (discard_padding > 0 && discard_padding <= frame->nb_samples) {
         if (discard_padding == frame->nb_samples) {
+            av_log(avctx, AV_LOG_DEBUG, "discard whole frame\n");
             *discarded_samples += frame->nb_samples;
             return AVERROR(EAGAIN);
         } else {
@@ -474,8 +477,9 @@ static inline int decode_simple_internal(AVCodecContext *avctx, AVFrame *frame, 
         av_frame_unref(frame);
 
     // FF_CODEC_CB_TYPE_DECODE decoders must not return AVERROR EAGAIN
+    // or AVERROR_EOF.
     // code later will add AVERROR(EAGAIN) to a pointer
-    av_assert0(consumed != AVERROR(EAGAIN));
+    av_assert0(consumed != AVERROR(EAGAIN) && consumed != AVERROR_EOF);
     if (consumed < 0)
         ret = consumed;
     if (consumed >= 0 && avctx->codec->type == AVMEDIA_TYPE_VIDEO)
@@ -2148,7 +2152,9 @@ av_cold int ff_decode_preinit(AVCodecContext *avctx)
     if (!(avctx->export_side_data & AV_CODEC_EXPORT_DATA_ENHANCEMENTS)) {
         if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
 #if CONFIG_LIBLCEVC_DEC
-            ret = ff_lcevc_alloc(&dc->lcevc.ctx, av_log_get_level() + avctx->log_level_offset);
+            FFCodecContext *ffavc = ffcodeccontext(avctx);
+            ret = ff_lcevc_alloc(&dc->lcevc.ctx, &ffavc->lcevc_params,
+                                 av_log_get_level() + avctx->log_level_offset);
             if (ret < 0 && (avctx->err_recognition & AV_EF_EXPLODE))
                 return ret;
 #endif

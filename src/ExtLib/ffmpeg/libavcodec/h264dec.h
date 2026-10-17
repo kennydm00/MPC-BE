@@ -685,17 +685,6 @@ static av_always_inline int get_chroma_qp(const PPS *pps, int t, int qscale)
     return pps->chroma_qp_table[t][qscale];
 }
 
-static inline int ff_h264_skip_all_pixels(const AVCodecContext *avctx)
-{
-    return avctx->skip_pred >= AVDISCARD_ALL &&
-           avctx->skip_idct >= AVDISCARD_ALL &&
-           !avctx->err_recognition &&
-           !(avctx->flags2 & AV_CODEC_FLAG2_CHUNKS) &&
-           !(avctx->export_side_data & (AV_CODEC_EXPORT_DATA_MVS |
-                                        AV_CODEC_EXPORT_DATA_VIDEO_ENC_PARAMS)) &&
-           !(avctx->debug & (FF_DEBUG_QP | FF_DEBUG_MB_TYPE));
-}
-
 int ff_h264_field_end(H264Context *h, H264SliceContext *sl, int in_setup);
 
 int ff_h264_ref_picture(H264Picture *dst, const H264Picture *src);
@@ -734,10 +723,5 @@ void ff_h264_flush_change(H264Context *h);
 void ff_h264_free_tables(H264Context *h);
 
 void ff_h264_set_erpic(ERPicture *dst, const H264Picture *src);
-
-// ==> Start patch MPC
-enum AVPixelFormat ff_h264_get_pixel_format(H264Context *h, const SPS *sps);
-const SPS* h264_getSPS(const H264Context *h);
-// ==> End patch MPC
 
 #endif /* AVCODEC_H264DEC_H */

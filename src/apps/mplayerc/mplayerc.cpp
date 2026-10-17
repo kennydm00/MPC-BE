@@ -26,6 +26,7 @@
 #include <Tlhelp32.h>
 #include "MainFrm.h"
 #include "Misc.h"
+#include "controls/DarkTheme.h"
 #include <winternl.h>
 #include "Ifo.h"
 #include "MultiMonitor.h"
@@ -921,6 +922,11 @@ BOOL CMPlayerCApp::InitInstance()
 	if (m_s.nCLSwitches & CLSW_ADMINOPTION) {
 		m_bRunAdmin = true;
 		m_s.LoadFormats(true);
+		// This elevated instance only loads the Formats settings, so bUseDarkTheme would stay at
+		// its default (dark) and the dialog would appear dark even when the user turned the dark
+		// theme off. Load the flag so the elevated Formats dialog matches the chosen theme.
+		AfxGetProfile().ReadBool(IDS_R_THEME, IDS_RS_USEDARKTHEME, m_s.bUseDarkTheme);
+		AfxGetProfile().ReadBool(IDS_R_THEME, IDS_RS_DARKDIALOGS, m_s.bDarkDialogs);
 
 		switch (m_s.iAdminOption) {
 			case CPPageFormats::IDD : {
@@ -1531,6 +1537,9 @@ void CMPlayerCApp::SetLanguage(int nLanguage, bool bSave/* = true*/)
 					s.iLanguage = nLanguage;
 				}
 			} else {
+				// Dark-theme this box (it fires during early startup, before the persistent message-box
+				// hook is installed in CMainFrame::OnCreate, so the RAII guard installs a scoped one).
+				DarkTheme::CDarkMessageBoxHook mbHook;
 				// This message should stay in English!
 				MessageBoxW(nullptr, L"Your language pack will not work with this version. Please download a compatible one from the MPC-BE homepage.",
 					L"MPC-BE", MB_OK);
@@ -1585,3 +1594,44 @@ CRenderersSettings& GetRenderersSettings()
 {
 	return AfxGetAppSettings().m_VRSettings;
 }
+
+#if _MSC_PLATFORM_TOOLSET > 143 && (defined(_M_X64) || defined(_M_AMD64))
+// Win7 compat shim: VS 2026 toolset links CreateFile2 (Win8+) through std::filesystem, which breaks loading on Win7.
+// We provide the import symbol ourselves and fall back to CreateFileW.
+
+using CreateFile2_t = HANDLE(WINAPI*)(LPCWSTR, DWORD, DWORD, DWORD, LPCREATEFILE2_EXTENDED_PARAMETERS);
+
+static HANDLE WINAPI CreateFile2_Wrapper(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
+										 DWORD dwCreationDisposition, LPCREATEFILE2_EXTENDED_PARAMETERS pCreateExParams)
+{
+	static CreateFile2_t realCreateFile2 = reinterpret_cast<CreateFile2_t>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "CreateFile2"));
+	if (realCreateFile2) {
+		return realCreateFile2(lpFileName, dwDesiredAccess, dwShareMode,
+							   dwCreationDisposition, pCreateExParams);
+	} else {
+		DWORD dwFlagsAndAttributes = 0;
+		LPSECURITY_ATTRIBUTES lpSecurityAttributes = nullptr;
+		HANDLE hTemplateFile = nullptr;
+
+		if (pCreateExParams) {
+			if (pCreateExParams->dwSize < sizeof(*pCreateExParams)) {
+				SetLastError(ERROR_INVALID_PARAMETER);
+				return INVALID_HANDLE_VALUE;
+			}
+
+			dwFlagsAndAttributes = pCreateExParams->dwFileAttributes | pCreateExParams->dwFileFlags;
+
+			if (pCreateExParams->dwSecurityQosFlags != 0) {
+				dwFlagsAndAttributes |= SECURITY_SQOS_PRESENT | pCreateExParams->dwSecurityQosFlags;
+			}
+
+			lpSecurityAttributes = pCreateExParams->lpSecurityAttributes;
+			hTemplateFile = pCreateExParams->hTemplateFile;
+		}
+
+		return CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	}
+}
+
+extern "C" CreateFile2_t __imp_CreateFile2 = &CreateFile2_Wrapper;
+#endif
